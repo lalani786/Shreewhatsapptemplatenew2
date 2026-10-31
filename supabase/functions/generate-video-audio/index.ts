@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { encode as base64Encode } from "https://deno.land/std@0.168.0/encoding/base64.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -84,8 +85,49 @@ serve(async (req) => {
       }, 200);
     }
 
-    const apiKey = (userApiKey as string | undefined)?.trim() || Deno.env.get("ELEVENLABS_API_KEY");
-    if (!apiKey) return json({ error: "ELEVENLABS_API_KEY is not configured" }, 200);
+    // Priority 1: User-provided API key (for testing/override)
+    let apiKey = (userApiKey as string | undefined)?.trim();
+
+    // Priority 2: Retrieve user's API key from database using JWT authentication
+    if (!apiKey) {
+      const authHeader = req.headers.get("Authorization");
+      if (!authHeader) {
+        return json({ error: "Authorization header required" }, 401);
+      }
+
+      const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+      const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+      const supabase = createClient(supabaseUrl, supabaseServiceKey, {
+        global: { headers: { Authorization: authHeader } },
+      });
+
+      const { data: { user }, error: authError } = await supabase.auth.getUser();
+      if (authError || !user) {
+        return json({ error: "Invalid authentication" }, 401);
+      }
+
+      const { data: creds, error: dbError } = await supabase
+        .from("api_credentials")
+        .select("elevenlabs_api_key")
+        .eq("user_id", user.id)
+        .maybeSingle();
+
+      if (dbError) {
+        console.error("Database error fetching API key:", dbError);
+        return json({ error: "Failed to retrieve API key from database" }, 500);
+      }
+
+      apiKey = (creds as any)?.elevenlabs_api_key?.trim() || "";
+    }
+
+    // Priority 3: Fallback to environment variable (for backward compatibility)
+    if (!apiKey) {
+      apiKey = Deno.env.get("ELEVENLABS_API_KEY")?.trim() || "";
+    }
+
+    if (!apiKey) {
+      return json({ error: "No ElevenLabs API key configured. Please add your key in ElevenLabs Setup." }, 200);
+    }
 
     // Permission pre-check: probes TTS + Music endpoints minimally without consuming credits.
     if (action === "check") {
@@ -172,7 +214,7 @@ serve(async (req) => {
         if (!ttsRes.ok) {
           const errText = await ttsRes.text();
           console.error("TTS error:", ttsRes.status, errText);
-          const isQuota = errText.includes("quota_exceeded");
+          const isQuota = errText.toLowerCase().includes("quota_exceeded") || errText.toLowerCase().includes("quota exceeded");
           result.voiceError = `Voiceover failed (${ttsRes.status}): ${errText.slice(0, 200)}`;
 
           // Generate full complete voiceover using multi-chunk backup engine

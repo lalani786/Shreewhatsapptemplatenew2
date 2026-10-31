@@ -68,8 +68,10 @@ export default function ElevenLabsSetup() {
       setSavedKey(existing);
       setApiKey(existing);
       setLoading(false);
-      // Auto-check on load
-      void checkStatus(existing);
+      // Auto-check on load using the saved key from database (Edge Function will retrieve it)
+      if (existing) {
+        void checkStatus();
+      }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -77,7 +79,7 @@ export default function ElevenLabsSetup() {
   const checkStatus = async (keyOverride?: string) => {
     setStatus({ kind: "checking" });
     const { data, error } = await supabase.functions.invoke("elevenlabs-status", {
-      body: { apiKey: keyOverride ?? apiKey },
+      body: keyOverride ? { apiKey: keyOverride } : {},
     });
 
     if (error) {
@@ -136,6 +138,8 @@ export default function ElevenLabsSetup() {
     toast.success("API key saved");
     setSaving(false);
     void checkStatus(trimmed);
+    // Notify other components (e.g., SocialMedia page) that the key has been updated
+    window.dispatchEvent(new CustomEvent("elevenlabs-key-updated", { detail: { apiKey: trimmed } }));
   };
 
   const renderStatus = () => {
@@ -255,7 +259,7 @@ export default function ElevenLabsSetup() {
               </Button>
               <Button
                 variant="outline"
-                onClick={() => checkStatus()}
+                onClick={() => checkStatus(apiKey !== savedKey ? apiKey : undefined)}
                 disabled={status.kind === "checking"}
               >
                 {status.kind === "checking" ? (

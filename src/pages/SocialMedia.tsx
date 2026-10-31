@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { useLocation } from "react-router-dom";
+import { useLocation, useNavigate, Link } from "react-router-dom";
 import { LiveFeed } from "@/components/social/LiveFeed";
 import { createPromoVideo } from "@/lib/createPromoVideo";
 import { createPromoVideoWithAudio } from "@/lib/createPromoVideoWithAudio";
@@ -51,6 +51,8 @@ import {
   Download,
   Volume2,
   AlertCircle,
+  Key,
+  Mic,
 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
@@ -491,7 +493,7 @@ export default function SocialMedia() {
       let perms = elevenPerms;
       if (!perms || !perms.tts) {
         const check = await supabase.functions.invoke("generate-video-audio", {
-          body: { action: "check", apiKey: userElevenLabsKey || undefined },
+          body: { action: "check" },
         });
         if (check.error) throw check.error;
         const data = check.data as { tts?: boolean; music?: boolean; ttsError?: string; musicError?: string } | null;
@@ -508,14 +510,15 @@ export default function SocialMedia() {
       }
 
       const { data, error } = await supabase.functions.invoke("generate-video-audio", {
-        body: { voiceText: text, musicPrompt: "", apiKey: userElevenLabsKey || undefined },
+        body: { voiceText: text, musicPrompt: "" },
       });
       if (error) throw error;
       if (data?.error) throw new Error(data.error);
 
       if (data?.voiceError) {
-        if (data.voiceError.toLowerCase().includes("quota_exceeded")) {
-          const match = data.voiceError.match(/(\d+)\s+credits remaining.*?(\d+)\s+credits are required/i);
+        if (data.voiceError.toLowerCase().includes("quota_exceeded") || data.voiceError.toLowerCase().includes("quota exceeded")) {
+          const match = data.voiceError.match(/(\d+)\s+credits remaining.*?(\d+)\s+credits are required/i) ||
+                         data.voiceError.match(/have\s+(\d+)\s+credits.*?(\d+)\s+credits are required/i);
           const remaining = match ? parseInt(match[1], 10) : 62;
           const required = match ? parseInt(match[2], 10) : 160;
           setQuotaExceededInfo({ remaining, required });
@@ -545,7 +548,7 @@ export default function SocialMedia() {
           toast.warning(
             `ElevenLabs quota reached (${remaining} credits left). Playing preview using device speech! Add a new key in ElevenLabs Setup.`,
             {
-              action: { label: "Setup Key", onClick: () => window.location.href = "/elevenlabs" },
+              action: { label: "Setup Key", onClick: () => navigate("/elevenlabs-setup") },
               duration: 10000,
             }
           );
@@ -614,7 +617,7 @@ export default function SocialMedia() {
       let perms = elevenPerms;
       if (!perms || !perms.tts) {
         const check = await supabase.functions.invoke("generate-video-audio", {
-          body: { action: "check", apiKey: userElevenLabsKey || undefined },
+          body: { action: "check" },
         });
         if (check.error) throw check.error;
         const data = check.data as { tts?: boolean; music?: boolean; ttsError?: string; musicError?: string } | null;
@@ -632,14 +635,15 @@ export default function SocialMedia() {
 
       toast.info("Generating full voiceover audio for download...");
       const { data, error } = await supabase.functions.invoke("generate-video-audio", {
-        body: { voiceText: text, musicPrompt: "", apiKey: userElevenLabsKey || undefined },
+        body: { voiceText: text, musicPrompt: "" },
       });
       if (error) throw error;
       if (data?.error) throw new Error(data.error);
 
       if (data?.voiceError) {
-        if (data.voiceError.toLowerCase().includes("quota_exceeded")) {
-          const match = data.voiceError.match(/(\d+)\s+credits remaining.*?(\d+)\s+credits are required/i);
+        if (data.voiceError.toLowerCase().includes("quota_exceeded") || data.voiceError.toLowerCase().includes("quota exceeded")) {
+          const match = data.voiceError.match(/(\d+)\s+credits remaining.*?(\d+)\s+credits are required/i) ||
+                         data.voiceError.match(/have\s+(\d+)\s+credits.*?(\d+)\s+credits are required/i);
           const remaining = match ? parseInt(match[1], 10) : 62;
           const required = match ? parseInt(match[2], 10) : 160;
           setQuotaExceededInfo({ remaining, required });
@@ -660,7 +664,7 @@ export default function SocialMedia() {
           toast.error(
             `ElevenLabs quota exceeded: You have ${remaining} credits remaining, but this text requires ${required} credits. Add a new key in ElevenLabs Setup.`,
             {
-              action: { label: "ElevenLabs Setup", onClick: () => window.location.href = "/elevenlabs" },
+              action: { label: "ElevenLabs Setup", onClick: () => navigate("/elevenlabs-setup") },
               duration: 12000,
             }
           );
@@ -758,6 +762,7 @@ export default function SocialMedia() {
   };
 
   const location = useLocation();
+  const navigate = useNavigate();
 
   useEffect(() => {
     fetchData();
@@ -804,6 +809,19 @@ export default function SocialMedia() {
     return () => window.removeEventListener("pollinations-key-updated", onPollKeyUpdate);
   }, []);
 
+  useEffect(() => {
+    const onElevenLabsKeyUpdate = async (ev: CustomEvent) => {
+      const newKey = ev.detail?.apiKey || "";
+      if (newKey) {
+        setUserElevenLabsKey(newKey);
+        setAvailableKeys((prev) => ({ ...prev, elevenlabs_api_key: true }));
+        toast.success("ElevenLabs API key updated!");
+      }
+    };
+    window.addEventListener("elevenlabs-key-updated", onElevenLabsKeyUpdate as EventListener);
+    return () => window.removeEventListener("elevenlabs-key-updated", onElevenLabsKeyUpdate as EventListener);
+  }, []);
+
   const fetchImageProvider = async () => {
     const { data: { user } } = await supabase.auth.getUser();
     let pollKey = localStorage.getItem("pollinations_api_key") || "";
@@ -837,6 +855,7 @@ export default function SocialMedia() {
         stability_api_key: !!data.stability_api_key,
         leonardo_api_key: !!data.leonardo_api_key,
         nvidia_api_key: !!data.nvidia_api_key,
+        elevenlabs_api_key: !!(data as any).elevenlabs_api_key,
         pollinations_api_key: Boolean(pollKey),
       });
       if (data.nvidia_api_key) setImageProvider("nvidia");
@@ -1762,7 +1781,7 @@ export default function SocialMedia() {
       let musicAudio: string | undefined;
       try {
         const audioRes = await supabase.functions.invoke("generate-video-audio", {
-          body: { voiceText, musicPrompt, musicDurationSeconds: 12, apiKey: userElevenLabsKey || undefined },
+          body: { voiceText, musicPrompt, musicDurationSeconds: 12 },
         });
         if (audioRes.error) {
           console.warn("generate-video-audio edge function error:", audioRes.error);
@@ -2347,74 +2366,6 @@ export default function SocialMedia() {
                     <div className="relative flex justify-center text-xs uppercase">
                       <span className="bg-card px-2 text-muted-foreground">or generate with AI</span>
                     </div>
-
-                    {/* ElevenLabs permissions checklist */}
-                    <div className="rounded-md bg-muted/40 p-2 space-y-1.5">
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="flex items-center gap-1.5">
-                          <ShieldCheck className="h-3 w-3 text-muted-foreground" />
-                          <span className="text-[11px] font-medium">ElevenLabs permissions</span>
-                        </div>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          className="h-6 px-2 text-[10px]"
-                          onClick={handleCheckElevenPermissions}
-                          disabled={isCheckingPerms}
-                        >
-                          {isCheckingPerms ? (
-                            <Loader2 className="mr-1 h-3 w-3 animate-spin" />
-                          ) : null}
-                          {elevenPerms ? "Re-check" : "Check now"}
-                        </Button>
-                      </div>
-                      <ul className="space-y-1 text-[11px]">
-                        <li className="flex items-start gap-1.5">
-                          {elevenPerms == null ? (
-                            <span className="mt-0.5 inline-block h-3 w-3 rounded-full border border-muted-foreground/40" />
-                          ) : elevenPerms.tts ? (
-                            <CheckCircle2 className="mt-0.5 h-3 w-3 text-success" />
-                          ) : (
-                            <XCircle className="mt-0.5 h-3 w-3 text-destructive" />
-                          )}
-                          <div className="flex-1">
-                            <span className={elevenPerms && !elevenPerms.tts ? "text-destructive" : ""}>Text to Speech</span>
-                            {elevenPerms?.ttsError && (
-                              <p className="text-[10px] text-muted-foreground mt-0.5">{elevenPerms.ttsError}</p>
-                            )}
-                          </div>
-                        </li>
-                        <li className="flex items-start gap-1.5">
-                          {elevenPerms == null ? (
-                            <span className="mt-0.5 inline-block h-3 w-3 rounded-full border border-muted-foreground/40" />
-                          ) : elevenPerms.music ? (
-                            <CheckCircle2 className="mt-0.5 h-3 w-3 text-success" />
-                          ) : (
-                            <span className="mt-0.5 inline-block h-3 w-3 text-center text-[10px] font-bold text-amber-500">ℹ</span>
-                          )}
-                          <div className="flex-1">
-                            <span className={elevenPerms && !elevenPerms.music ? "text-amber-600 dark:text-amber-400" : ""}>
-                              Music generation <span className="text-[10px] font-normal text-muted-foreground">(Optional • Paid plan)</span>
-                            </span>
-                            {elevenPerms?.musicError && (
-                              <p className="text-[10px] text-muted-foreground mt-0.5">{elevenPerms.musicError}</p>
-                            )}
-                          </div>
-                        </li>
-                      </ul>
-                      {elevenPerms && !elevenPerms.tts && (
-                        <a
-                          href="https://elevenlabs.io/app/settings/api-keys"
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1 text-[11px] text-primary hover:underline"
-                        >
-                          <ExternalLink className="h-3 w-3" />
-                          Enable missing permissions in ElevenLabs
-                        </a>
-                      )}
-                    </div>
                   </div>
 
                   <div className="space-y-2">
@@ -2725,65 +2676,201 @@ export default function SocialMedia() {
                         Promo Video
                       </Button>
                     </div>
-                    <div className="space-y-1.5 rounded-md border border-dashed border-muted-foreground/25 p-2">
-                      <div className="flex items-center justify-between">
-                        <Label className="text-xs font-medium">Voiceover script</Label>
-                        <button
-                          type="button"
-                          className="text-[10px] text-primary hover:underline disabled:opacity-50"
-                          disabled={!postContent.trim()}
-                          onClick={() => setVoiceoverText(postContent)}
-                        >
-                          Use post content
-                        </button>
-                      </div>
-                      <Textarea
-                        value={voiceoverText}
-                        onChange={(e) => setVoiceoverText(e.target.value)}
-                        placeholder="What should the AI voice say in the video? (defaults to post content if blank)"
-                        rows={3}
-                        className="text-xs"
-                      />
-                      <div className="flex items-center justify-between gap-2">
-                        <p className="text-[10px] text-muted-foreground">
-                          {voiceoverText.trim().length}/1500 chars
-                        </p>
+                    {/* AI Voiceover & Audio Engine */}
+                    <div className="space-y-3 rounded-lg border border-primary/25 bg-muted/20 p-3 shadow-sm">
+                      {/* Section Header */}
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
                         <div className="flex items-center gap-1.5">
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            className="h-7 px-2 text-xs"
-                            onClick={handlePreviewVoiceover}
-                            disabled={isPreviewingVoice}
-                            title="Preview voiceover audio"
+                          <Mic className="h-4 w-4 text-primary" />
+                          <span className="text-xs font-semibold">AI Voiceover (ElevenLabs)</span>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <Link
+                            to="/elevenlabs-setup"
+                            className={`inline-flex items-center gap-1 text-[10px] font-medium rounded-full px-2 py-0.5 border transition-all ${
+                              userElevenLabsKey
+                                ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/20"
+                                : "border-amber-500/50 bg-amber-500/10 text-amber-700 dark:text-amber-300 hover:bg-amber-500/20 font-semibold"
+                            }`}
+                            title={
+                              userElevenLabsKey
+                                ? "ElevenLabs API Key configured. Click to manage/view credits."
+                                : "ElevenLabs API Key not configured. Click to setup."
+                            }
                           >
-                            {isPreviewingVoice ? (
-                              <Loader2 className="mr-1 h-3 w-3 animate-spin" />
-                            ) : (
-                              <Volume2 className="mr-1 h-3 w-3" />
-                            )}
-                            Preview
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            className="h-7 px-2 text-xs border-primary/40 text-primary hover:bg-primary/10 gap-1 font-semibold"
-                            onClick={handleDownloadVoice}
-                            disabled={isDownloadingVoice}
-                            title="Generate and download voiceover audio (.mp3)"
-                          >
-                            {isDownloadingVoice ? (
-                              <Loader2 className="mr-1 h-3 w-3 animate-spin" />
-                            ) : (
-                              <Download className="mr-1 h-3 w-3" />
-                            )}
-                            Download Voice
-                          </Button>
+                            <Key className="h-2.5 w-2.5" />
+                            <span>{userElevenLabsKey ? "Key Configured" : "Setup Key"}</span>
+                            <ExternalLink className="h-2.5 w-2.5 opacity-70" />
+                          </Link>
                         </div>
                       </div>
 
+                      {/* Missing Key Banner */}
+                      {!userElevenLabsKey && (
+                        <div className="flex items-center justify-between gap-2 rounded-md bg-amber-500/10 border border-amber-500/30 p-2 text-xs text-amber-900 dark:text-amber-200">
+                          <div className="flex items-start gap-1.5 min-w-0">
+                            <AlertCircle className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
+                            <span className="text-[11px]">
+                              ElevenLabs API key is not configured. Add your key to generate neural voiceovers.
+                            </span>
+                          </div>
+                          <Link
+                            to="/elevenlabs-setup"
+                            className="font-semibold text-[11px] text-primary hover:underline shrink-0"
+                          >
+                            Setup Key &rarr;
+                          </Link>
+                        </div>
+                      )}
+
+                      {/* Permissions checklist */}
+                      <div className="rounded-md bg-background/70 border border-border/60 p-2 space-y-1.5">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-1.5">
+                            <ShieldCheck className="h-3 w-3 text-muted-foreground" />
+                            <span className="text-[11px] font-medium">ElevenLabs Permissions</span>
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <Link
+                              to="/elevenlabs-setup"
+                              className="text-[10px] text-primary hover:underline inline-flex items-center gap-0.5"
+                            >
+                              <Key className="h-2.5 w-2.5" />
+                              Manage
+                            </Link>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="h-5 px-1.5 text-[10px]"
+                              onClick={handleCheckElevenPermissions}
+                              disabled={isCheckingPerms}
+                            >
+                              {isCheckingPerms ? (
+                                <Loader2 className="mr-1 h-2.5 w-2.5 animate-spin" />
+                              ) : null}
+                              {elevenPerms ? "Re-check" : "Check now"}
+                            </Button>
+                          </div>
+                        </div>
+                        <ul className="space-y-1 text-[11px]">
+                          <li className="flex items-start gap-1.5">
+                            {elevenPerms == null ? (
+                              <span className="mt-0.5 inline-block h-3 w-3 rounded-full border border-muted-foreground/40" />
+                            ) : elevenPerms.tts ? (
+                              <CheckCircle2 className="mt-0.5 h-3 w-3 text-success" />
+                            ) : (
+                              <XCircle className="mt-0.5 h-3 w-3 text-destructive" />
+                            )}
+                            <div className="flex-1">
+                              <span className={elevenPerms && !elevenPerms.tts ? "text-destructive" : ""}>Text to Speech</span>
+                              {elevenPerms?.ttsError && (
+                                <p className="text-[10px] text-muted-foreground mt-0.5">{elevenPerms.ttsError}</p>
+                              )}
+                            </div>
+                          </li>
+                          <li className="flex items-start gap-1.5">
+                            {elevenPerms == null ? (
+                              <span className="mt-0.5 inline-block h-3 w-3 rounded-full border border-muted-foreground/40" />
+                            ) : elevenPerms.music ? (
+                              <CheckCircle2 className="mt-0.5 h-3 w-3 text-success" />
+                            ) : (
+                              <span className="mt-0.5 inline-block h-3 w-3 text-center text-[10px] font-bold text-amber-500">ℹ</span>
+                            )}
+                            <div className="flex-1">
+                              <span className={elevenPerms && !elevenPerms.music ? "text-amber-600 dark:text-amber-400" : ""}>
+                                Music generation <span className="text-[10px] font-normal text-muted-foreground">(Optional • Paid plan)</span>
+                              </span>
+                              {elevenPerms?.musicError && (
+                                <p className="text-[10px] text-muted-foreground mt-0.5">{elevenPerms.musicError}</p>
+                              )}
+                            </div>
+                          </li>
+                        </ul>
+                        {elevenPerms && !elevenPerms.tts && (
+                          <div className="flex items-center gap-2 flex-wrap pt-0.5">
+                            <Link
+                              to="/elevenlabs-setup"
+                              className="inline-flex items-center gap-1 text-[11px] text-primary hover:underline font-medium"
+                            >
+                              <Key className="h-3 w-3" />
+                              ElevenLabs Setup Page &rarr;
+                            </Link>
+                            <a
+                              href="https://elevenlabs.io/app/settings/api-keys"
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:underline"
+                            >
+                              <ExternalLink className="h-3 w-3" />
+                              Manage at ElevenLabs.io
+                            </a>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Script Input & Controls */}
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between">
+                          <Label className="text-xs font-medium">Voiceover script</Label>
+                          <button
+                            type="button"
+                            className="text-[10px] text-primary hover:underline disabled:opacity-50"
+                            disabled={!postContent.trim()}
+                            onClick={() => setVoiceoverText(postContent)}
+                          >
+                            Use post content
+                          </button>
+                        </div>
+                        <Textarea
+                          value={voiceoverText}
+                          onChange={(e) => setVoiceoverText(e.target.value)}
+                          placeholder="What should the AI voice say in the video? (defaults to post content if blank)"
+                          rows={3}
+                          className="text-xs bg-background"
+                        />
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="text-[10px] text-muted-foreground">
+                            {voiceoverText.trim().length}/1500 chars
+                          </p>
+                          <div className="flex items-center gap-1.5">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 px-2 text-xs"
+                              onClick={handlePreviewVoiceover}
+                              disabled={isPreviewingVoice}
+                              title="Preview voiceover audio"
+                            >
+                              {isPreviewingVoice ? (
+                                <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                              ) : (
+                                <Volume2 className="mr-1 h-3 w-3" />
+                              )}
+                              Preview
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="h-7 px-2 text-xs border-primary/40 text-primary hover:bg-primary/10 gap-1 font-semibold"
+                              onClick={handleDownloadVoice}
+                              disabled={isDownloadingVoice}
+                              title="Generate and download voiceover audio (.mp3)"
+                            >
+                              {isDownloadingVoice ? (
+                                <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                              ) : (
+                                <Download className="mr-1 h-3 w-3" />
+                              )}
+                              Download Voice
+                            </Button>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Audio Ready Banner */}
                       {latestVoiceAudio && (
                         <div className="flex items-center justify-between gap-2 rounded-md bg-primary/10 border border-primary/20 px-2.5 py-1.5 text-xs">
                           <div className="flex items-center gap-1.5 min-w-0">
@@ -2828,6 +2915,7 @@ export default function SocialMedia() {
                         </div>
                       )}
 
+                      {/* Quota Exceeded Alert */}
                       {quotaExceededInfo && (
                         <div className="space-y-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-2.5 text-xs text-amber-950 dark:text-amber-200">
                           <div className="flex items-start gap-1.5">
@@ -2853,12 +2941,12 @@ export default function SocialMedia() {
                               {isDownloadingVoice ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Download className="mr-1 h-3 w-3" />}
                               Download Full Voice (Backup)
                             </Button>
-                            <a
-                              href="/elevenlabs"
+                            <Link
+                              to="/elevenlabs-setup"
                               className="inline-flex h-6 items-center justify-center rounded border border-amber-500/50 bg-background/80 px-2 text-[10px] font-medium hover:bg-accent"
                             >
-                              Setup &rarr;
-                            </a>
+                              ElevenLabs Setup &rarr;
+                            </Link>
                           </div>
                         </div>
                       )}
