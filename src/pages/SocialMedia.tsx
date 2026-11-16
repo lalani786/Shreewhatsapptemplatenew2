@@ -467,7 +467,8 @@ export default function SocialMedia() {
   };
 
 
-  const handlePreviewVoiceover = async (useBackupEngine = false) => {
+  const handlePreviewVoiceover = async (useBackupEngine: boolean | unknown = false) => {
+    const isBackup = typeof useBackupEngine === "boolean" ? useBackupEngine : false;
     const text = (voiceoverText.trim() || postContent.trim() || imagePrompt.trim()).slice(0, 2000);
     if (!text) {
       toast.error("Please enter post content or a voiceover script first");
@@ -480,7 +481,7 @@ export default function SocialMedia() {
     }
     setIsPreviewingVoice(true);
     try {
-      if (useBackupEngine) {
+      if (isBackup) {
         toast.info("Generating full voice preview with backup engine...");
         const fbRes = await supabase.functions.invoke("generate-video-audio", {
           body: { voiceText: text, action: "free_tts" },
@@ -528,7 +529,7 @@ export default function SocialMedia() {
       if (data?.voiceError) {
         if (data.voiceError.toLowerCase().includes("quota_exceeded") || data.voiceError.toLowerCase().includes("quota exceeded")) {
           const match = data.voiceError.match(/(\d+)\s+credits remaining.*?(\d+)\s+credits are required/i) ||
-                         data.voiceError.match(/have\s+(\d+)\s+credits.*?(\d+)\s+credits are required/i);
+            data.voiceError.match(/have\s+(\d+)\s+credits.*?(\d+)\s+credits are required/i);
           const remaining = match ? parseInt(match[1], 10) : 62;
           const required = match ? parseInt(match[2], 10) : 160;
           setQuotaExceededInfo({ remaining, required });
@@ -588,7 +589,8 @@ export default function SocialMedia() {
     }
   };
 
-  const handleDownloadVoice = async (useBackupEngine = false) => {
+  const handleDownloadVoice = async (useBackupEngine: boolean | unknown = false) => {
+    const isBackup = typeof useBackupEngine === "boolean" ? useBackupEngine : false;
     const rawText = (voiceoverText.trim() || postContent.trim() || imagePrompt.trim()).slice(0, 2000);
     if (!rawText && !latestVoiceAudio) {
       toast.error("Please enter post content or a voiceover script first");
@@ -600,7 +602,7 @@ export default function SocialMedia() {
     const filename = `voiceover-${timestamp}.mp3`;
 
     // Only reuse cached audio if it is for the EXACT text and not forcing fresh backup generation
-    if (!useBackupEngine && latestVoiceAudio && text && latestVoiceScript === text) {
+    if (!isBackup && latestVoiceAudio && text && latestVoiceScript === text) {
       downloadAudioBase64(latestVoiceAudio, filename);
       toast.success("Full voiceover audio downloaded!");
       return;
@@ -608,7 +610,7 @@ export default function SocialMedia() {
 
     setIsDownloadingVoice(true);
     try {
-      if (useBackupEngine) {
+      if (isBackup) {
         toast.info("Generating full voiceover with backup engine...");
         const fbRes = await supabase.functions.invoke("generate-video-audio", {
           body: { voiceText: text, action: "free_tts" },
@@ -653,7 +655,7 @@ export default function SocialMedia() {
       if (data?.voiceError) {
         if (data.voiceError.toLowerCase().includes("quota_exceeded") || data.voiceError.toLowerCase().includes("quota exceeded")) {
           const match = data.voiceError.match(/(\d+)\s+credits remaining.*?(\d+)\s+credits are required/i) ||
-                         data.voiceError.match(/have\s+(\d+)\s+credits.*?(\d+)\s+credits are required/i);
+            data.voiceError.match(/have\s+(\d+)\s+credits.*?(\d+)\s+credits are required/i);
           const remaining = match ? parseInt(match[1], 10) : 62;
           const required = match ? parseInt(match[2], 10) : 160;
           setQuotaExceededInfo({ remaining, required });
@@ -1530,7 +1532,7 @@ export default function SocialMedia() {
     setIsGeneratingImage(false);
   };
 
-    const handleDownloadCurrentVideo = async () => {
+  const handleDownloadCurrentVideo = async () => {
     const isVideo = isVideoFile(mediaFile) || (mediaPreview && !mediaPreview.startsWith("data:image") && isVideoUrl(mediaPreview));
     if (!isVideo && !mediaFile && !mediaPreview && !mediaUrl) {
       toast.error("No video available to download");
@@ -1600,8 +1602,8 @@ export default function SocialMedia() {
           imageProvider === "cosmos"
             ? "Generating frame for NVIDIA Cosmos promo video..."
             : imageProvider === "nvidia"
-            ? "Generating FLUX AI image for promo video..."
-            : "Generating AI image for video..."
+              ? "Generating FLUX AI image for promo video..."
+              : "Generating AI image for video..."
         );
         let imageUrl = "";
         if (imageProvider === "pollinations") {
@@ -1706,8 +1708,8 @@ export default function SocialMedia() {
           voiceAudioToMix
             ? "Creating promo video with synchronized voiceover & motion effects…"
             : imageProvider === "cosmos"
-            ? "Creating NVIDIA Cosmos animated promo video with motion effects..."
-            : "Creating promo video with motion effects..."
+              ? "Creating NVIDIA Cosmos animated promo video with motion effects..."
+              : "Creating promo video with motion effects..."
         );
 
         if (voiceAudioToMix) {
@@ -2238,10 +2240,10 @@ export default function SocialMedia() {
               {/* feature pills row */}
               <div className="flex flex-wrap gap-2 pt-1">
                 {([
-                  { icon: Film,   label: "AI Video Studio", color: "from-violet-500/20 to-purple-500/20 border-violet-500/30 text-violet-300" },
-                  { icon: Share2, label: "Multi-Platform",  color: "from-pink-500/20 to-rose-500/20 border-pink-500/30 text-pink-300" },
-                  { icon: Mic,    label: "Voiceover AI",    color: "from-sky-500/20 to-blue-500/20 border-sky-500/30 text-sky-300" },
-                  { icon: Send,   label: "Auto-Post",       color: "from-emerald-500/20 to-teal-500/20 border-emerald-500/30 text-emerald-300" },
+                  { icon: Film, label: "AI Video Studio", color: "from-violet-500/20 to-purple-500/20 border-violet-500/30 text-violet-300" },
+                  { icon: Share2, label: "Multi-Platform", color: "from-pink-500/20 to-rose-500/20 border-pink-500/30 text-pink-300" },
+                  { icon: Mic, label: "Voiceover AI", color: "from-sky-500/20 to-blue-500/20 border-sky-500/30 text-sky-300" },
+                  { icon: Send, label: "Auto-Post", color: "from-emerald-500/20 to-teal-500/20 border-emerald-500/30 text-emerald-300" },
                 ] as Array<{ icon: typeof Film; label: string; color: string }>).map(({ icon: Icon, label, color }) => (
                   <span
                     key={label}
@@ -2297,9 +2299,9 @@ export default function SocialMedia() {
                 {/* status items */}
                 <div className="space-y-2">
                   {([
-                    { label: "AI Video Generation Engine", status: "Online",     dot: "bg-emerald-400" },
-                    { label: "ElevenLabs Neural Voices",   status: "Connected",  dot: "bg-purple-400"  },
-                    { label: "Multi-Platform APIs",        status: "Configured", dot: "bg-sky-400"     },
+                    { label: "AI Video Generation Engine", status: "Online", dot: "bg-emerald-400" },
+                    { label: "ElevenLabs Neural Voices", status: "Connected", dot: "bg-purple-400" },
+                    { label: "Multi-Platform APIs", status: "Configured", dot: "bg-sky-400" },
                   ] as Array<{ label: string; status: string; dot: string }>).map(({ label, status, dot }) => (
                     <div key={label} className="flex items-center justify-between gap-2">
                       <div className="flex items-center gap-2 min-w-0">
@@ -2314,10 +2316,10 @@ export default function SocialMedia() {
                 {/* platform icons row */}
                 <div className="flex items-center justify-center gap-3 pt-1 border-t border-white/10">
                   <Instagram className="h-4 w-4 text-pink-400 opacity-80 hover:opacity-100 transition-opacity" />
-                  <Youtube   className="h-4 w-4 text-red-400  opacity-80 hover:opacity-100 transition-opacity" />
-                  <Facebook  className="h-4 w-4 text-blue-400 opacity-80 hover:opacity-100 transition-opacity" />
-                  <Linkedin  className="h-4 w-4 text-sky-400  opacity-80 hover:opacity-100 transition-opacity" />
-                  <Twitter   className="h-4 w-4 text-slate-300 opacity-80 hover:opacity-100 transition-opacity" />
+                  <Youtube className="h-4 w-4 text-red-400  opacity-80 hover:opacity-100 transition-opacity" />
+                  <Facebook className="h-4 w-4 text-blue-400 opacity-80 hover:opacity-100 transition-opacity" />
+                  <Linkedin className="h-4 w-4 text-sky-400  opacity-80 hover:opacity-100 transition-opacity" />
+                  <Twitter className="h-4 w-4 text-slate-300 opacity-80 hover:opacity-100 transition-opacity" />
                 </div>
               </div>
             </div>
@@ -2390,7 +2392,7 @@ export default function SocialMedia() {
                   variant="outline"
                   size="sm"
                   className="h-8 text-xs gap-1"
-                  onClick={handleDownloadVoice}
+                  onClick={() => handleDownloadVoice(false)}
                   title="Download separate voiceover MP3 audio"
                 >
                   <Mic className="h-3.5 w-3.5 text-primary" />
@@ -2525,8 +2527,8 @@ export default function SocialMedia() {
                           key={platform.id}
                           onClick={() => handlePlatformToggle(platform.id)}
                           className={`flex flex-col items-center gap-2 rounded-lg border-2 p-3 transition-all ${isSelected
-                              ? "border-primary bg-accent"
-                              : "border-border hover:border-muted-foreground/30"
+                            ? "border-primary bg-accent"
+                            : "border-border hover:border-muted-foreground/30"
                             }`}
                         >
                           <Icon className={`h-6 w-6 ${isSelected ? "text-primary" : "text-muted-foreground"}`} />
@@ -2579,10 +2581,10 @@ export default function SocialMedia() {
                 {youtubeUpload.status !== "idle" && (
                   <div
                     className={`mt-3 rounded-lg border p-3 text-sm flex items-start gap-2 ${youtubeUpload.status === "uploading"
-                        ? "border-blue-200 bg-blue-50 text-blue-800 dark:bg-blue-950/30 dark:text-blue-200"
-                        : youtubeUpload.status === "success"
-                          ? "border-green-200 bg-green-50 text-green-800 dark:bg-green-950/30 dark:text-green-200"
-                          : "border-destructive/30 bg-destructive/10 text-destructive"
+                      ? "border-blue-200 bg-blue-50 text-blue-800 dark:bg-blue-950/30 dark:text-blue-200"
+                      : youtubeUpload.status === "success"
+                        ? "border-green-200 bg-green-50 text-green-800 dark:bg-green-950/30 dark:text-green-200"
+                        : "border-destructive/30 bg-destructive/10 text-destructive"
                       }`}
                   >
                     {youtubeUpload.status === "uploading" && <Loader2 className="h-4 w-4 mt-0.5 animate-spin shrink-0" />}
@@ -2637,112 +2639,112 @@ export default function SocialMedia() {
                 <CardContent className="space-y-3">
                   {mediaPreview ? (
                     <div className="space-y-2">
-                    <div className="relative">
-                      {isVideoFile(mediaFile) || (mediaPreview && !mediaPreview.startsWith("data:image") && isVideoUrl(mediaPreview)) ? (
-                        <video
-                          src={mediaPreview}
-                          controls
-                          className="w-full rounded-lg border max-h-48"
-                        />
-                      ) : (
-                        <img
-                          src={mediaPreview}
-                          alt="Preview"
-                          className="w-full rounded-lg border object-cover max-h-48"
-                        />
-                      )}
-                      <div className="absolute top-2 right-2 flex items-center gap-1.5 flex-wrap justify-end">
-                        {(isVideoFile(mediaFile) || (mediaPreview && !mediaPreview.startsWith("data:image") && isVideoUrl(mediaPreview))) && (
-                          <>
+                      <div className="relative">
+                        {isVideoFile(mediaFile) || (mediaPreview && !mediaPreview.startsWith("data:image") && isVideoUrl(mediaPreview)) ? (
+                          <video
+                            src={mediaPreview}
+                            controls
+                            className="w-full rounded-lg border max-h-48"
+                          />
+                        ) : (
+                          <img
+                            src={mediaPreview}
+                            alt="Preview"
+                            className="w-full rounded-lg border object-cover max-h-48"
+                          />
+                        )}
+                        <div className="absolute top-2 right-2 flex items-center gap-1.5 flex-wrap justify-end">
+                          {(isVideoFile(mediaFile) || (mediaPreview && !mediaPreview.startsWith("data:image") && isVideoUrl(mediaPreview))) && (
+                            <>
+                              <Button
+                                type="button"
+                                variant="secondary"
+                                size="sm"
+                                className="h-7 gap-1 text-xs bg-background/90 backdrop-blur-sm shadow-sm"
+                                onClick={() => setIsVideoPreviewOpen(true)}
+                                title="Open video player dialogue"
+                              >
+                                <Eye className="h-3 w-3 text-primary" />
+                                Open
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="secondary"
+                                size="sm"
+                                className="h-7 gap-1 text-xs bg-background/90 backdrop-blur-sm shadow-sm font-semibold text-primary"
+                                onClick={handleDownloadCurrentVideo}
+                                title="Download video with mixed audio"
+                              >
+                                <Download className="h-3 w-3 text-primary" />
+                                Video
+                              </Button>
+                            </>
+                          )}
+                          {latestVoiceAudio && (
                             <Button
                               type="button"
                               variant="secondary"
                               size="sm"
                               className="h-7 gap-1 text-xs bg-background/90 backdrop-blur-sm shadow-sm"
-                              onClick={() => setIsVideoPreviewOpen(true)}
-                              title="Open video player dialogue"
+                              onClick={() => handleDownloadVoice(false)}
+                              title="Download voiceover audio (.mp3)"
                             >
-                              <Eye className="h-3 w-3 text-primary" />
-                              Open
+                              <Mic className="h-3 w-3 text-primary" />
+                              Voice (.mp3)
+                            </Button>
+                          )}
+                          <Button
+                            variant="destructive"
+                            size="sm"
+                            className="h-7 text-xs"
+                            onClick={() => {
+                              setMediaPreview(null);
+                              setMediaFile(null);
+                              setMediaUrl(null);
+                            }}
+                          >
+                            Remove
+                          </Button>
+                        </div>
+                      </div>
+
+                      {(isVideoFile(mediaFile) || (mediaPreview && !mediaPreview.startsWith("data:image") && isVideoUrl(mediaPreview))) && (
+                        <div className="flex items-center justify-between gap-2 rounded-md border border-primary/20 bg-primary/5 p-2 text-xs">
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <Film className="h-4 w-4 text-primary shrink-0" />
+                            <div className="min-w-0">
+                              <p className="font-semibold text-[11px] truncate">Promo Video Ready</p>
+                              <p className="text-[10px] text-muted-foreground truncate">
+                                {latestVoiceAudio ? "✓ Voiceover audio mixed into video" : "Animated motion video"}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="h-7 px-2 text-xs gap-1"
+                              onClick={() => setIsVideoPreviewOpen(true)}
+                              title="Open video in player dialogue"
+                            >
+                              <Eye className="h-3 w-3" />
+                              Preview Dialog
                             </Button>
                             <Button
                               type="button"
-                              variant="secondary"
+                              variant="default"
                               size="sm"
-                              className="h-7 gap-1 text-xs bg-background/90 backdrop-blur-sm shadow-sm font-semibold text-primary"
+                              className="h-7 px-2 text-xs gap-1 font-semibold bg-gradient-to-r from-primary to-primary/80"
                               onClick={handleDownloadCurrentVideo}
-                              title="Download video with mixed audio"
+                              title="Download video file with mixed audio"
                             >
-                              <Download className="h-3 w-3 text-primary" />
-                              Video
+                              <Download className="h-3 w-3" />
+                              Download Video
                             </Button>
-                          </>
-                        )}
-                        {latestVoiceAudio && (
-                          <Button
-                            type="button"
-                            variant="secondary"
-                            size="sm"
-                            className="h-7 gap-1 text-xs bg-background/90 backdrop-blur-sm shadow-sm"
-                            onClick={handleDownloadVoice}
-                            title="Download voiceover audio (.mp3)"
-                          >
-                            <Mic className="h-3 w-3 text-primary" />
-                            Voice (.mp3)
-                          </Button>
-                        )}
-                        <Button
-                          variant="destructive"
-                          size="sm"
-                          className="h-7 text-xs"
-                          onClick={() => {
-                            setMediaPreview(null);
-                            setMediaFile(null);
-                            setMediaUrl(null);
-                          }}
-                        >
-                          Remove
-                        </Button>
-                      </div>
-                    </div>
-
-                    {(isVideoFile(mediaFile) || (mediaPreview && !mediaPreview.startsWith("data:image") && isVideoUrl(mediaPreview))) && (
-                      <div className="flex items-center justify-between gap-2 rounded-md border border-primary/20 bg-primary/5 p-2 text-xs">
-                        <div className="flex items-center gap-1.5 min-w-0">
-                          <Film className="h-4 w-4 text-primary shrink-0" />
-                          <div className="min-w-0">
-                            <p className="font-semibold text-[11px] truncate">Promo Video Ready</p>
-                            <p className="text-[10px] text-muted-foreground truncate">
-                              {latestVoiceAudio ? "✓ Voiceover audio mixed into video" : "Animated motion video"}
-                            </p>
                           </div>
                         </div>
-                        <div className="flex items-center gap-1.5 shrink-0">
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            className="h-7 px-2 text-xs gap-1"
-                            onClick={() => setIsVideoPreviewOpen(true)}
-                            title="Open video in player dialogue"
-                          >
-                            <Eye className="h-3 w-3" />
-                            Preview Dialog
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="default"
-                            size="sm"
-                            className="h-7 px-2 text-xs gap-1 font-semibold bg-gradient-to-r from-primary to-primary/80"
-                            onClick={handleDownloadCurrentVideo}
-                            title="Download video file with mixed audio"
-                          >
-                            <Download className="h-3 w-3" />
-                            Download Video
-                          </Button>
-                        </div>
-                      </div>
-                    )}
+                      )}
                     </div>
                   ) : (
                     <label className="flex cursor-pointer flex-col items-center gap-2 rounded-lg border-2 border-dashed border-muted-foreground/25 p-6 transition-colors hover:border-primary/50">
@@ -3085,11 +3087,10 @@ export default function SocialMedia() {
                         <div className="flex items-center gap-1.5">
                           <Link
                             to="/elevenlabs-setup"
-                            className={`inline-flex items-center gap-1 text-[10px] font-medium rounded-full px-2 py-0.5 border transition-all ${
-                              userElevenLabsKey
+                            className={`inline-flex items-center gap-1 text-[10px] font-medium rounded-full px-2 py-0.5 border transition-all ${userElevenLabsKey
                                 ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/20"
                                 : "border-amber-500/50 bg-amber-500/10 text-amber-700 dark:text-amber-300 hover:bg-amber-500/20 font-semibold"
-                            }`}
+                              }`}
                             title={
                               userElevenLabsKey
                                 ? "ElevenLabs API Key configured. Click to manage/view credits."
@@ -3237,7 +3238,7 @@ export default function SocialMedia() {
                               variant="ghost"
                               size="sm"
                               className="h-7 px-2 text-xs"
-                              onClick={handlePreviewVoiceover}
+                              onClick={() => handlePreviewVoiceover(false)}
                               disabled={isPreviewingVoice}
                               title="Preview voiceover audio"
                             >
@@ -3253,7 +3254,7 @@ export default function SocialMedia() {
                               variant="outline"
                               size="sm"
                               className="h-7 px-2 text-xs border-primary/40 text-primary hover:bg-primary/10 gap-1 font-semibold"
-                              onClick={handleDownloadVoice}
+                              onClick={() => handleDownloadVoice(false)}
                               disabled={isDownloadingVoice}
                               title="Generate and download voiceover audio (.mp3)"
                             >
@@ -3693,8 +3694,8 @@ export default function SocialMedia() {
                                             key={pg.id}
                                             onClick={() => handleSelectFacebookPage(pg)}
                                             className={`flex items-center justify-between rounded-md border p-2.5 text-left text-xs transition-colors ${isCurrent
-                                                ? "border-emerald-500 bg-emerald-500/15"
-                                                : "border-border hover:border-emerald-500/50 hover:bg-accent"
+                                              ? "border-emerald-500 bg-emerald-500/15"
+                                              : "border-border hover:border-emerald-500/50 hover:bg-accent"
                                               }`}
                                           >
                                             <div>
