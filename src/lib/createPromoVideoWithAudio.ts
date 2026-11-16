@@ -1,14 +1,14 @@
 /**
  * Creates a promo video (Ken Burns animated image) WITH mixed audio:
  * an optional voiceover layered over optional background music.
- * Returns a webm Blob containing video + audio.
+ * Returns a webm/mp4 Blob containing video + synchronized mixed audio.
  */
 
 interface PromoVideoAudioOptions {
   imageUrl: string;
   text?: string;
-  voiceAudioBase64?: string; // mp3 base64
-  musicAudioBase64?: string; // mp3 base64
+  voiceAudioBase64?: string; // mp3 base64 or data URI or URL
+  musicAudioBase64?: string; // mp3 base64 or data URI or URL
   musicVolume?: number; // 0-1, default 0.25 when voice present, 0.7 otherwise
   voiceVolume?: number; // 0-1, default 1.0
   width?: number;
@@ -17,8 +17,14 @@ interface PromoVideoAudioOptions {
   maxDurationMs?: number;
 }
 
-function base64ToArrayBuffer(b64: string): ArrayBuffer {
-  const binary = atob(b64);
+async function audioSourceToArrayBuffer(src: string): Promise<ArrayBuffer> {
+  if (src.startsWith("http://") || src.startsWith("https://") || src.startsWith("blob:")) {
+    const res = await fetch(src);
+    return await res.arrayBuffer();
+  }
+  // Strip data URI header if present (e.g. data:audio/mpeg;base64,) and clean whitespace
+  const clean = (src.includes(",") ? src.split(",")[1] : src).replace(/[^A-Za-z0-9+/=]/g, "");
+  const binary = atob(clean);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
   return bytes.buffer;
@@ -136,22 +142,54 @@ export async function createPromoVideoWithAudio(opts: PromoVideoAudioOptions): P
   const AudioCtx: typeof AudioContext =
     (window as any).AudioContext || (window as any).webkitAudioContext;
   const audioCtx = new AudioCtx();
+  if (audioCtx.state === "suspended") {
+    try {
+      await audioCtx.resume();
+    } catch (e) {
+      console.warn("AudioContext resume error:", e);
+    }
+  }
 
   // Decode audio
   let voiceBuffer: AudioBuffer | null = null;
   let musicBuffer: AudioBuffer | null = null;
+
   if (voiceAudioBase64) {
     try {
-      voiceBuffer = await audioCtx.decodeAudioData(base64ToArrayBuffer(voiceAudioBase64));
+      const buf = await audioSourceToArrayBuffer(voiceAudioBase64);
+      if (buf.byteLength > 0) {
+        voiceBuffer = await new Promise<AudioBuffer>((resolve, reject) => {
+          audioCtx.decodeAudioData(buf.slice(0), resolve, reject);
+        });
+        console.log("Voice audio decoded successfully. Duration:", voiceBuffer.duration.toFixed(2), "s");
+      }
     } catch (e) {
-      console.warn("Voice decode failed", e);
+      console.warn("Voice decode failed with callback, trying Promise:", e);
+      try {
+        const buf = await audioSourceToArrayBuffer(voiceAudioBase64);
+        voiceBuffer = await audioCtx.decodeAudioData(buf);
+      } catch (e2) {
+        console.error("AudioContext decodeAudioData error for voice:", e2);
+      }
     }
   }
+
   if (musicAudioBase64) {
     try {
-      musicBuffer = await audioCtx.decodeAudioData(base64ToArrayBuffer(musicAudioBase64));
+      const buf = await audioSourceToArrayBuffer(musicAudioBase64);
+      if (buf.byteLength > 0) {
+        musicBuffer = await new Promise<AudioBuffer>((resolve, reject) => {
+          audioCtx.decodeAudioData(buf.slice(0), resolve, reject);
+        });
+        console.log("Music audio decoded successfully. Duration:", musicBuffer.duration.toFixed(2), "s");
+      }
     } catch (e) {
-      console.warn("Music decode failed", e);
+      try {
+        const buf = await audioSourceToArrayBuffer(musicAudioBase64);
+        musicBuffer = await audioCtx.decodeAudioData(buf);
+      } catch (e2) {
+        console.warn("AudioContext decodeAudioData error for music:", e2);
+      }
     }
   }
 
@@ -160,7 +198,7 @@ export async function createPromoVideoWithAudio(opts: PromoVideoAudioOptions): P
   const musicDur = musicBuffer ? musicBuffer.duration * 1000 : 0;
   const targetDurMs = Math.min(
     maxDurationMs,
-    Math.max(minDurationMs, voiceDur || musicDur || minDurationMs)
+    Math.max(minDurationMs, voiceDur ? Math.ceil(voiceDur + 800) : (musicDur || minDurationMs))
   );
 
   // Audio graph -> MediaStreamDestination
@@ -179,6 +217,7 @@ export async function createPromoVideoWithAudio(opts: PromoVideoAudioOptions): P
     src.start(0);
     src.stop(audioCtx.currentTime + targetDurMs / 1000);
   }
+
   if (voiceBuffer) {
     const src = audioCtx.createBufferSource();
     src.buffer = voiceBuffer;
@@ -196,22 +235,34 @@ export async function createPromoVideoWithAudio(opts: PromoVideoAudioOptions): P
 
   const fps = 30;
   const videoStream = canvas.captureStream(fps);
+  const audioTracks = dest.stream.getAudioTracks();
   const combined = new MediaStream([
     ...videoStream.getVideoTracks(),
-    ...dest.stream.getAudioTracks(),
+    ...audioTracks,
   ]);
 
-  const mimeType = MediaRecorder.isTypeSupported("video/mp4")
-    ? "video/mp4"
-    : MediaRecorder.isTypeSupported("video/mp4;codecs=avc1,opus")
-      ? "video/mp4;codecs=avc1,opus"
-      : MediaRecorder.isTypeSupported("video/webm;codecs=vp9,opus")
-        ? "video/webm;codecs=vp9,opus"
-        : MediaRecorder.isTypeSupported("video/webm;codecs=vp8,opus")
-          ? "video/webm;codecs=vp8,opus"
-          : "video/webm";
+  const mimeCandidates = [
+    "video/webm;codecs=vp9,opus",
+    "video/webm;codecs=vp8,opus",
+    "video/webm",
+    "video/mp4;codecs=avc1,opus",
+    "video/mp4;codecs=avc1,mp4a.40.2",
+    "video/mp4",
+  ];
+  let mimeType = "video/webm";
+  for (const c of mimeCandidates) {
+    if (typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported(c)) {
+      mimeType = c;
+      break;
+    }
+  }
 
-  const recorder = new MediaRecorder(combined, { mimeType, videoBitsPerSecond: 4_000_000 });
+  const recorder = new MediaRecorder(combined, {
+    mimeType,
+    videoBitsPerSecond: 4_000_000,
+    audioBitsPerSecond: 128_000,
+  });
+
   const chunks: Blob[] = [];
   recorder.ondataavailable = (e) => {
     if (e.data.size > 0) chunks.push(e.data);
@@ -224,7 +275,7 @@ export async function createPromoVideoWithAudio(opts: PromoVideoAudioOptions): P
     };
     recorder.onerror = () => reject(new Error("Recording failed"));
 
-    recorder.start();
+    recorder.start(250);
     const totalFrames = Math.floor((targetDurMs / 1000) * fps);
     let frame = 0;
     const startTime = performance.now();

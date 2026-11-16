@@ -31,6 +31,10 @@ import {
 } from "@/lib/nvidiaAccess";
 import { generateNvidiaImage } from "@/lib/nvidiaService";
 import {
+  loadPollinationsApiKeyFromSupabase,
+  getStoredPollinationsApiKey,
+} from "@/lib/pollinationsKey";
+import {
   DEFAULT_LEGACY_POLLINATIONS_MODEL,
   POLLINATIONS_MODELS,
   PollinationsImageError,
@@ -182,46 +186,10 @@ export default function AiTemplate() {
   const selectedPollinationsModel = pollinationsModel || getDefaultModelForEndpoint(pollinationsEndpoint);
 
   const fetchPollinationsKey = useCallback(async () => {
-    setPollinationsApiKey("");
-
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      let key = "";
-
-      if (user) {
-        try {
-          const { data } = await (supabase as any)
-            .from("ai_api_keys")
-            .select("pollinations_api_key")
-            .eq("user_id", user.id)
-            .maybeSingle();
-          key = (data as { pollinations_api_key?: string | null } | null)?.pollinations_api_key ?? "";
-        } catch {
-          // fall back to api_credentials
-        }
-
-        if (!key) {
-          try {
-            const { data: creds } = await supabase
-              .from("api_credentials")
-              .select("*")
-              .eq("user_id", user.id)
-              .maybeSingle();
-            key = (creds as any)?.pollinations_api_key ?? "";
-          } catch {
-            // ignore
-          }
-        }
-      }
-
-      if (!key) {
-        key = localStorage.getItem("pollinations_api_key") || "";
-      }
-
-      if (key && key.length > 0) {
-        setPollinationsApiKey(key);
-        setAvailableKeys(prev => ({ ...prev, pollinations_api_key: true }));
-      }
+      const key = await loadPollinationsApiKeyFromSupabase();
+      setPollinationsApiKey(key);
+      setAvailableKeys(prev => ({ ...prev, pollinations_api_key: Boolean(key) }));
     } catch (error) {
       console.warn("Pollinations API key lookup skipped:", error);
     }

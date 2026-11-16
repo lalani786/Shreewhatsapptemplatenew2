@@ -67,6 +67,7 @@ import {
   getStoredNvidiaApiKey,
 } from "@/lib/nvidiaAccess";
 import { generateNvidiaImage } from "@/lib/nvidiaService";
+import { loadPollinationsApiKeyFromSupabase, getStoredPollinationsApiKey } from "@/lib/pollinationsKey";
 import {
   POLLINATIONS_MODELS,
   generatePollinationsImage,
@@ -75,6 +76,14 @@ import {
   resolvePollinationsEndpoint,
   type PollinationsEndpoint,
 } from "@/lib/pollinationsImage";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
 import CreateMetaTemplateDialog from "@/components/social/CreateMetaTemplateDialog";
 
 interface Template {
@@ -376,6 +385,7 @@ export default function SocialMedia() {
   });
   const [isGeneratingVideo, setIsGeneratingVideo] = useState(false);
   const [isGeneratingVideoAudio, setIsGeneratingVideoAudio] = useState(false);
+  const [isVideoPreviewOpen, setIsVideoPreviewOpen] = useState(false);
   const [voiceoverText, setVoiceoverText] = useState("");
   const [isPreviewingVoice, setIsPreviewingVoice] = useState(false);
   const [isDownloadingVoice, setIsDownloadingVoice] = useState(false);
@@ -798,12 +808,10 @@ export default function SocialMedia() {
   }, []);
 
   useEffect(() => {
-    const onPollKeyUpdate = () => {
-      const k = localStorage.getItem("pollinations_api_key") || "";
-      if (k) {
-        setPollinationsApiKey(k);
-        setAvailableKeys((prev) => ({ ...prev, pollinations_api_key: true }));
-      }
+    const onPollKeyUpdate = (ev?: any) => {
+      const k = ev?.detail?.apiKey || getStoredPollinationsApiKey();
+      setPollinationsApiKey(k);
+      setAvailableKeys((prev) => ({ ...prev, pollinations_api_key: Boolean(k) }));
     };
     window.addEventListener("pollinations-key-updated", onPollKeyUpdate);
     return () => window.removeEventListener("pollinations-key-updated", onPollKeyUpdate);
@@ -823,25 +831,14 @@ export default function SocialMedia() {
   }, []);
 
   const fetchImageProvider = async () => {
-    const { data: { user } } = await supabase.auth.getUser();
-    let pollKey = localStorage.getItem("pollinations_api_key") || "";
-    if (user) {
-      try {
-        const { data: aiKeyData } = await (supabase as any)
-          .from("ai_api_keys")
-          .select("pollinations_api_key")
-          .eq("user_id", user.id)
-          .maybeSingle();
-        if ((aiKeyData as any)?.pollinations_api_key) {
-          pollKey = (aiKeyData as any).pollinations_api_key;
-        }
-      } catch {
-        // ignore
-      }
-    }
-    if (pollKey) setPollinationsApiKey(pollKey);
+    const pollKey = await loadPollinationsApiKeyFromSupabase();
+    setPollinationsApiKey(pollKey);
 
-    if (!user) return;
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+      setAvailableKeys((prev) => ({ ...prev, pollinations_api_key: Boolean(pollKey) }));
+      return;
+    }
     const { data } = await supabase
       .from("api_credentials")
       .select("stability_api_key, leonardo_api_key, nvidia_api_key, elevenlabs_api_key")
@@ -1419,7 +1416,7 @@ export default function SocialMedia() {
             height: 1024,
             endpoint: pollinationsEndpoint,
             seed: Math.floor(Math.random() * 2147483647),
-            apiKey: pollinationsApiKey || null,
+            apiKey: pollinationsApiKey || getStoredPollinationsApiKey() || null,
           });
           data = { imageUrl: res.imageUrl };
         } catch (pollErr: any) {
@@ -1497,7 +1494,7 @@ export default function SocialMedia() {
             height: 1024,
             endpoint: pollinationsEndpoint,
             seed: Math.floor(Math.random() * 2147483647),
-            apiKey: pollinationsApiKey || null,
+            apiKey: pollinationsApiKey || getStoredPollinationsApiKey() || null,
           });
           data = { imageUrl: fallbackRes.imageUrl };
         }
@@ -1531,6 +1528,50 @@ export default function SocialMedia() {
     }
 
     setIsGeneratingImage(false);
+  };
+
+    const handleDownloadCurrentVideo = async () => {
+    const isVideo = isVideoFile(mediaFile) || (mediaPreview && !mediaPreview.startsWith("data:image") && isVideoUrl(mediaPreview));
+    if (!isVideo && !mediaFile && !mediaPreview && !mediaUrl) {
+      toast.error("No video available to download");
+      return;
+    }
+    try {
+      toast.info("Preparing video download…");
+      let blob: Blob | null = null;
+      let ext = "mp4";
+
+      if (mediaFile) {
+        blob = mediaFile;
+        ext = mediaFile.name.toLowerCase().endsWith(".mp4") ? "mp4" : "webm";
+      } else if (mediaPreview?.startsWith("blob:") || mediaPreview?.startsWith("data:")) {
+        const res = await fetch(mediaPreview);
+        blob = await res.blob();
+        ext = (blob.type || "").includes("mp4") ? "mp4" : "webm";
+      } else if (mediaUrl) {
+        const res = await fetch(mediaUrl);
+        blob = await res.blob();
+        ext = (blob.type || "").includes("mp4") ? "mp4" : "webm";
+      }
+
+      if (!blob) {
+        throw new Error("Could not load video data");
+      }
+
+      const filename = `promo_video_${Date.now()}.${ext}`;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+      toast.success(`Video downloaded successfully (${filename})!`);
+    } catch (err: any) {
+      console.error("Video download error:", err);
+      toast.error(err?.message || "Failed to download video");
+    }
   };
 
   const handleGeneratePromoVideo = async () => {
@@ -1572,7 +1613,7 @@ export default function SocialMedia() {
             height: 1024,
             endpoint: pollinationsEndpoint,
             seed: Math.floor(Math.random() * 2147483647),
-            apiKey: pollinationsApiKey || null,
+            apiKey: pollinationsApiKey || getStoredPollinationsApiKey() || null,
           });
           imageUrl = res.imageUrl;
         } else if (imageProvider === "nvidia" || imageProvider === "cosmos") {
@@ -1632,19 +1673,62 @@ export default function SocialMedia() {
 
         if (!imageUrl) throw new Error("No image generated");
 
-        // Step 2: High quality animated Ken Burns promo video
+        // Step 2: Check for voiceover to synchronize and mix
+        const voiceScript = (voiceoverText.trim() || postContent.trim() || imagePrompt.trim()).slice(0, 1500);
+        let voiceAudioToMix: string | undefined = latestVoiceAudio || undefined;
+
+        if (!voiceAudioToMix && voiceScript) {
+          toast.info("Synthesizing voiceover for promo video…");
+          try {
+            const audioRes = await supabase.functions.invoke("generate-video-audio", {
+              body: { voiceText: voiceScript, musicPrompt: "", apiKey: userElevenLabsKey || undefined },
+            });
+            if (audioRes.data?.voiceAudio) {
+              voiceAudioToMix = audioRes.data.voiceAudio;
+              setLatestVoiceAudio(voiceAudioToMix);
+              setLatestVoiceScript(voiceScript);
+            } else if (audioRes.data?.voiceError?.toLowerCase().includes("quota_exceeded")) {
+              const fbRes = await supabase.functions.invoke("generate-video-audio", {
+                body: { voiceText: voiceScript, action: "free_tts" },
+              });
+              if (fbRes.data?.voiceAudio) {
+                voiceAudioToMix = fbRes.data.voiceAudio;
+                setLatestVoiceAudio(voiceAudioToMix);
+                setLatestVoiceScript(voiceScript);
+              }
+            }
+          } catch (e) {
+            console.warn("Auto voice synthesis failed:", e);
+          }
+        }
+
         toast.info(
-          imageProvider === "cosmos"
+          voiceAudioToMix
+            ? "Creating promo video with synchronized voiceover & motion effects…"
+            : imageProvider === "cosmos"
             ? "Creating NVIDIA Cosmos animated promo video with motion effects..."
             : "Creating promo video with motion effects..."
         );
-        videoBlob = await createPromoVideo({
-          imageUrl,
-          text: postContent.trim() || imagePrompt.trim(),
-          durationMs: 6000,
-          width: 1080,
-          height: 1080,
-        });
+
+        if (voiceAudioToMix) {
+          videoBlob = await createPromoVideoWithAudio({
+            imageUrl,
+            text: voiceScript,
+            voiceAudioBase64: voiceAudioToMix,
+            width: 1080,
+            height: 1080,
+            minDurationMs: 6000,
+            maxDurationMs: 25000,
+          });
+        } else {
+          videoBlob = await createPromoVideo({
+            imageUrl,
+            text: postContent.trim() || imagePrompt.trim(),
+            durationMs: 6000,
+            width: 1080,
+            height: 1080,
+          });
+        }
       }
 
 
@@ -1673,7 +1757,8 @@ export default function SocialMedia() {
       setMediaFile(videoFile);
       setMediaPreview(publicVideoUrl || URL.createObjectURL(videoBlob));
       setMediaUrl(publicVideoUrl);
-      toast.success("Promo video generated successfully!");
+      setIsVideoPreviewOpen(true);
+      toast.success("Promo video generated successfully! Opening preview…");
     } catch (err: any) {
       console.error("Video gen error:", err);
       const msg = err?.message || "Failed to generate promo video";
@@ -1738,7 +1823,7 @@ export default function SocialMedia() {
             height: 1024,
             endpoint: pollinationsEndpoint,
             seed: Math.floor(Math.random() * 2147483647),
-            apiKey: pollinationsApiKey || null,
+            apiKey: pollinationsApiKey || getStoredPollinationsApiKey() || null,
           });
           imageUrl = fbRes.imageUrl;
         }
@@ -1766,7 +1851,7 @@ export default function SocialMedia() {
             height: 1024,
             endpoint: pollinationsEndpoint,
             seed: Math.floor(Math.random() * 2147483647),
-            apiKey: pollinationsApiKey || null,
+            apiKey: pollinationsApiKey || getStoredPollinationsApiKey() || null,
           });
           imageUrl = fbRes.imageUrl;
         }
@@ -1775,35 +1860,58 @@ export default function SocialMedia() {
 
       // Step 2: voiceover + music
       toast.info("Generating AI voiceover and music…");
-      const voiceText = voiceoverText.trim() || postContent.trim() || imagePrompt.trim();
+      const voiceText = (voiceoverText.trim() || postContent.trim() || imagePrompt.trim()).slice(0, 1500);
       const musicPrompt = `cinematic upbeat background music for promo, ${imagePrompt.trim().slice(0, 120)}`;
-      let voiceAudio: string | undefined;
+      let voiceAudio: string | undefined = latestVoiceAudio || undefined;
       let musicAudio: string | undefined;
-      try {
-        const audioRes = await supabase.functions.invoke("generate-video-audio", {
-          body: { voiceText, musicPrompt, musicDurationSeconds: 12 },
-        });
-        if (audioRes.error) {
-          console.warn("generate-video-audio edge function error:", audioRes.error);
-          toast.info("Voiceover service unavailable. Creating video with motion effects.");
-        } else if (audioRes.data) {
-          if (audioRes.data?.error) {
-            console.warn("Audio generation warning:", audioRes.data.error);
-            toast.info(audioRes.data.error);
+
+      // If we don't already have voiceAudio, fetch/synthesize it with ElevenLabs or backup
+      if (!voiceAudio && voiceText) {
+        try {
+          const audioRes = await supabase.functions.invoke("generate-video-audio", {
+            body: { voiceText, musicPrompt, musicDurationSeconds: 12, apiKey: userElevenLabsKey || undefined },
+          });
+          if (audioRes.data) {
+            const { voiceAudio: va, musicAudio: ma, voiceError, musicError } = audioRes.data || {};
+            voiceAudio = va;
+            musicAudio = ma;
+            if (va) {
+              setLatestVoiceAudio(va);
+              setLatestVoiceScript(voiceText);
+            }
+            if (voiceError) {
+              if (voiceError.toLowerCase().includes("quota_exceeded")) {
+                toast.info("ElevenLabs quota reached. Using free backup voice engine for video…");
+                const fbRes = await supabase.functions.invoke("generate-video-audio", {
+                  body: { voiceText, action: "free_tts" },
+                });
+                if (fbRes.data?.voiceAudio) {
+                  voiceAudio = fbRes.data.voiceAudio;
+                  setLatestVoiceAudio(voiceAudio);
+                  setLatestVoiceScript(voiceText);
+                }
+              } else {
+                toast.warning(voiceError);
+              }
+            }
+            if (musicError) toast.info(musicError);
           }
-          const { voiceAudio: va, musicAudio: ma, voiceError, musicError } = audioRes.data || {};
-          voiceAudio = va;
-          musicAudio = ma;
-          if (va) {
-            setLatestVoiceAudio(va);
-            setLatestVoiceScript(voiceText);
+        } catch (audioErr: any) {
+          console.warn("Audio generation failed:", audioErr);
+          toast.info("Falling back to backup voice engine…");
+          try {
+            const fbRes = await supabase.functions.invoke("generate-video-audio", {
+              body: { voiceText, action: "free_tts" },
+            });
+            if (fbRes.data?.voiceAudio) {
+              voiceAudio = fbRes.data.voiceAudio;
+              setLatestVoiceAudio(voiceAudio);
+              setLatestVoiceScript(voiceText);
+            }
+          } catch (fbErr) {
+            console.error("Backup voice failed:", fbErr);
           }
-          if (voiceError) toast.warning(voiceError);
-          if (musicError) toast.warning(musicError);
         }
-      } catch (audioErr: any) {
-        console.warn("Audio generation failed:", audioErr);
-        toast.info("Audio generation skipped. Producing animated promo video.");
       }
 
       // Step 3: mix into video
@@ -1857,7 +1965,8 @@ export default function SocialMedia() {
       setMediaFile(file);
       setMediaPreview(publicUrl || URL.createObjectURL(blob));
       setMediaUrl(publicUrl);
-      toast.success("AI video with audio generated!");
+      setIsVideoPreviewOpen(true);
+      toast.success("AI video with audio generated! Opening preview…");
     } catch (err: any) {
       console.error("AI video+audio error:", err);
       toast.error(err?.message || "Failed to generate AI video with audio");
@@ -2080,17 +2189,239 @@ export default function SocialMedia() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="text-3xl font-bold">Social Media</h1>
-          <p className="text-muted-foreground">Create and auto-post content to multiple social platforms</p>
+
+      {/* â”€â”€ AI-Powered Hero Banner â”€â”€ */}
+      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-slate-900 via-purple-950 to-slate-900 border border-purple-800/40 shadow-2xl">
+        {/* animated grid overlay */}
+        <div
+          className="pointer-events-none absolute inset-0 opacity-[0.07]"
+          style={{
+            backgroundImage:
+              "linear-gradient(rgba(139,92,246,0.6) 1px, transparent 1px), linear-gradient(90deg, rgba(139,92,246,0.6) 1px, transparent 1px)",
+            backgroundSize: "40px 40px",
+          }}
+        />
+        {/* glow blobs */}
+        <div className="pointer-events-none absolute -top-20 -left-20 h-72 w-72 rounded-full bg-purple-600/20 blur-3xl" />
+        <div className="pointer-events-none absolute -bottom-20 -right-20 h-72 w-72 rounded-full bg-pink-600/20 blur-3xl" />
+        <div className="pointer-events-none absolute top-1/2 left-1/2 h-96 w-96 -translate-x-1/2 -translate-y-1/2 rounded-full bg-violet-700/10 blur-3xl" />
+
+        <div className="relative px-6 py-8 md:px-10 md:py-10">
+          <div className="flex flex-col gap-8 lg:flex-row lg:items-center lg:justify-between">
+
+            {/* Left â€” headline */}
+            <div className="max-w-xl space-y-4">
+              {/* pill */}
+              <div className="inline-flex items-center gap-2 rounded-full border border-purple-500/40 bg-purple-500/10 px-3 py-1 text-xs font-medium text-purple-300 backdrop-blur-sm">
+                <span className="relative flex h-2 w-2">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-purple-400 opacity-75" />
+                  <span className="relative inline-flex h-2 w-2 rounded-full bg-purple-400" />
+                </span>
+                AI-Powered Social Media Automation
+              </div>
+
+              <h1 className="text-3xl font-extrabold leading-tight tracking-tight text-white md:text-4xl">
+                Create &amp; Publish Content{" "}
+                <span className="bg-gradient-to-r from-purple-400 via-pink-400 to-violet-400 bg-clip-text text-transparent">
+                  10&times; Faster
+                </span>
+              </h1>
+
+              <p className="text-sm leading-relaxed text-slate-300/80 md:text-base">
+                Generate AI promo videos with synchronized voiceovers, auto-post to{" "}
+                <span className="font-semibold text-pink-300">Instagram</span>,{" "}
+                <span className="font-semibold text-red-400">YouTube</span>,{" "}
+                <span className="font-semibold text-blue-400">Facebook</span> &amp;{" "}
+                <span className="font-semibold text-sky-400">LinkedIn</span>, and track performance in real-time.
+              </p>
+
+              {/* feature pills row */}
+              <div className="flex flex-wrap gap-2 pt-1">
+                {([
+                  { icon: Film,   label: "AI Video Studio", color: "from-violet-500/20 to-purple-500/20 border-violet-500/30 text-violet-300" },
+                  { icon: Share2, label: "Multi-Platform",  color: "from-pink-500/20 to-rose-500/20 border-pink-500/30 text-pink-300" },
+                  { icon: Mic,    label: "Voiceover AI",    color: "from-sky-500/20 to-blue-500/20 border-sky-500/30 text-sky-300" },
+                  { icon: Send,   label: "Auto-Post",       color: "from-emerald-500/20 to-teal-500/20 border-emerald-500/30 text-emerald-300" },
+                ] as Array<{ icon: typeof Film; label: string; color: string }>).map(({ icon: Icon, label, color }) => (
+                  <span
+                    key={label}
+                    className={`inline-flex items-center gap-1.5 rounded-full border bg-gradient-to-r px-3 py-1 text-[11px] font-semibold backdrop-blur-sm ${color}`}
+                  >
+                    <Icon className="h-3 w-3" />
+                    {label}
+                  </span>
+                ))}
+              </div>
+
+              {/* CTA buttons */}
+              <div className="flex flex-wrap items-center gap-3 pt-2">
+                <Button
+                  onClick={() => setMetaTemplateOpen(true)}
+                  className="gap-2 bg-gradient-to-r from-purple-600 to-pink-600 text-white shadow-lg shadow-purple-900/40 hover:from-purple-500 hover:to-pink-500 border-0"
+                >
+                  <Send className="h-4 w-4" />
+                  Create Meta Template
+                </Button>
+                <Button
+                  variant="outline"
+                  className="gap-2 border-purple-500/40 bg-white/5 text-purple-200 hover:bg-purple-500/20 hover:text-white backdrop-blur-sm"
+                  onClick={() => setActiveTab("create")}
+                >
+                  <Sparkles className="h-4 w-4" />
+                  Start Creating
+                </Button>
+              </div>
+            </div>
+
+            {/* Right â€” System Status card */}
+            <div className="w-full max-w-xs shrink-0 self-center">
+              <div className="rounded-xl border border-white/10 bg-white/5 p-4 backdrop-blur-md shadow-xl space-y-3">
+                {/* header */}
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold uppercase tracking-widest text-slate-400">System Status</span>
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/20 px-2 py-0.5 text-[10px] font-bold text-emerald-300 border border-emerald-500/30">
+                    <span className="relative flex h-1.5 w-1.5">
+                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                      <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                    </span>
+                    Active
+                  </span>
+                </div>
+
+                {/* ready-to-post banner */}
+                <div className="flex items-center gap-2 rounded-lg bg-emerald-500/10 border border-emerald-500/20 px-3 py-2">
+                  <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
+                  <span className="text-xs font-medium text-emerald-300">Ready to post</span>
+                </div>
+
+                {/* status items */}
+                <div className="space-y-2">
+                  {([
+                    { label: "AI Video Generation Engine", status: "Online",     dot: "bg-emerald-400" },
+                    { label: "ElevenLabs Neural Voices",   status: "Connected",  dot: "bg-purple-400"  },
+                    { label: "Multi-Platform APIs",        status: "Configured", dot: "bg-sky-400"     },
+                  ] as Array<{ label: string; status: string; dot: string }>).map(({ label, status, dot }) => (
+                    <div key={label} className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${dot}`} />
+                        <span className="truncate text-[11px] text-slate-300">{label}</span>
+                      </div>
+                      <span className="shrink-0 text-[10px] font-semibold text-slate-400">{status}</span>
+                    </div>
+                  ))}
+                </div>
+
+                {/* platform icons row */}
+                <div className="flex items-center justify-center gap-3 pt-1 border-t border-white/10">
+                  <Instagram className="h-4 w-4 text-pink-400 opacity-80 hover:opacity-100 transition-opacity" />
+                  <Youtube   className="h-4 w-4 text-red-400  opacity-80 hover:opacity-100 transition-opacity" />
+                  <Facebook  className="h-4 w-4 text-blue-400 opacity-80 hover:opacity-100 transition-opacity" />
+                  <Linkedin  className="h-4 w-4 text-sky-400  opacity-80 hover:opacity-100 transition-opacity" />
+                  <Twitter   className="h-4 w-4 text-slate-300 opacity-80 hover:opacity-100 transition-opacity" />
+                </div>
+              </div>
+            </div>
+
+          </div>
         </div>
-        <Button onClick={() => setMetaTemplateOpen(true)} className="gap-2">
-          <Send className="h-4 w-4" />
-          Create Meta Template
-        </Button>
       </div>
+      {/* â”€â”€ /Hero â”€â”€ */}
+
       <CreateMetaTemplateDialog open={metaTemplateOpen} onOpenChange={setMetaTemplateOpen} />
+
+      {/* Video Preview & Download Dialog */}
+      <Dialog open={isVideoPreviewOpen} onOpenChange={setIsVideoPreviewOpen}>
+        <DialogContent className="sm:max-w-xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-base">
+              <Film className="h-4 w-4 text-primary" />
+              Promo Video Player & Download
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              Watch your synthesized video with synchronized voiceover audio and motion effects
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3">
+            {/* Video Player */}
+            <div className="overflow-hidden rounded-lg border bg-black shadow-inner flex items-center justify-center max-h-[380px]">
+              {mediaPreview && (
+                <video
+                  src={mediaPreview}
+                  controls
+                  autoPlay
+                  className="w-full max-h-[380px] object-contain"
+                />
+              )}
+            </div>
+
+            {/* Video Info Badges */}
+            <div className="flex items-center justify-between gap-2 flex-wrap text-xs">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <Badge variant="outline" className="bg-primary/10 text-primary border-primary/20 text-[10px] gap-1">
+                  <Film className="h-3 w-3" /> 1080x1080 HD
+                </Badge>
+                {latestVoiceAudio ? (
+                  <Badge variant="outline" className="bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/30 text-[10px] gap-1">
+                    <CheckCircle2 className="h-3 w-3" /> Voiceover Audio Mixed
+                  </Badge>
+                ) : (
+                  <Badge variant="outline" className="bg-muted text-muted-foreground text-[10px]">
+                    Motion Video
+                  </Badge>
+                )}
+              </div>
+            </div>
+
+            {/* Voiceover Script summary if present */}
+            {(voiceoverText || latestVoiceScript) && (
+              <div className="rounded-md bg-muted/50 p-2.5 text-[11px] text-muted-foreground border">
+                <span className="font-semibold text-foreground">Voiceover Script: </span>
+                <span>{voiceoverText || latestVoiceScript}</span>
+              </div>
+            )}
+          </div>
+
+          <DialogFooter className="flex items-center justify-between gap-2 sm:justify-between flex-wrap pt-2">
+            <div className="flex items-center gap-1.5">
+              {latestVoiceAudio && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 text-xs gap-1"
+                  onClick={handleDownloadVoice}
+                  title="Download separate voiceover MP3 audio"
+                >
+                  <Mic className="h-3.5 w-3.5 text-primary" />
+                  Voice (.mp3)
+                </Button>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-8 text-xs"
+                onClick={() => setIsVideoPreviewOpen(false)}
+              >
+                Close
+              </Button>
+              <Button
+                type="button"
+                variant="default"
+                size="sm"
+                className="h-8 text-xs gap-1.5 font-semibold bg-gradient-to-r from-primary to-primary/80"
+                onClick={handleDownloadCurrentVideo}
+              >
+                <Download className="h-3.5 w-3.5" />
+                Download Video
+              </Button>
+            </div>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
         <TabsList>
@@ -2305,6 +2636,7 @@ export default function SocialMedia() {
                 </CardHeader>
                 <CardContent className="space-y-3">
                   {mediaPreview ? (
+                    <div className="space-y-2">
                     <div className="relative">
                       {isVideoFile(mediaFile) || (mediaPreview && !mediaPreview.startsWith("data:image") && isVideoUrl(mediaPreview)) ? (
                         <video
@@ -2319,23 +2651,50 @@ export default function SocialMedia() {
                           className="w-full rounded-lg border object-cover max-h-48"
                         />
                       )}
-                      <div className="absolute top-2 right-2 flex items-center gap-1.5">
+                      <div className="absolute top-2 right-2 flex items-center gap-1.5 flex-wrap justify-end">
+                        {(isVideoFile(mediaFile) || (mediaPreview && !mediaPreview.startsWith("data:image") && isVideoUrl(mediaPreview))) && (
+                          <>
+                            <Button
+                              type="button"
+                              variant="secondary"
+                              size="sm"
+                              className="h-7 gap-1 text-xs bg-background/90 backdrop-blur-sm shadow-sm"
+                              onClick={() => setIsVideoPreviewOpen(true)}
+                              title="Open video player dialogue"
+                            >
+                              <Eye className="h-3 w-3 text-primary" />
+                              Open
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="secondary"
+                              size="sm"
+                              className="h-7 gap-1 text-xs bg-background/90 backdrop-blur-sm shadow-sm font-semibold text-primary"
+                              onClick={handleDownloadCurrentVideo}
+                              title="Download video with mixed audio"
+                            >
+                              <Download className="h-3 w-3 text-primary" />
+                              Video
+                            </Button>
+                          </>
+                        )}
                         {latestVoiceAudio && (
                           <Button
+                            type="button"
                             variant="secondary"
                             size="sm"
-                            className="h-8 gap-1 text-xs bg-background/85 backdrop-blur-sm shadow-sm"
+                            className="h-7 gap-1 text-xs bg-background/90 backdrop-blur-sm shadow-sm"
                             onClick={handleDownloadVoice}
                             title="Download voiceover audio (.mp3)"
                           >
-                            <Download className="h-3.5 w-3.5 text-primary" />
+                            <Mic className="h-3 w-3 text-primary" />
                             Voice (.mp3)
                           </Button>
                         )}
                         <Button
                           variant="destructive"
                           size="sm"
-                          className="h-8 text-xs"
+                          className="h-7 text-xs"
                           onClick={() => {
                             setMediaPreview(null);
                             setMediaFile(null);
@@ -2345,6 +2704,45 @@ export default function SocialMedia() {
                           Remove
                         </Button>
                       </div>
+                    </div>
+
+                    {(isVideoFile(mediaFile) || (mediaPreview && !mediaPreview.startsWith("data:image") && isVideoUrl(mediaPreview))) && (
+                      <div className="flex items-center justify-between gap-2 rounded-md border border-primary/20 bg-primary/5 p-2 text-xs">
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <Film className="h-4 w-4 text-primary shrink-0" />
+                          <div className="min-w-0">
+                            <p className="font-semibold text-[11px] truncate">Promo Video Ready</p>
+                            <p className="text-[10px] text-muted-foreground truncate">
+                              {latestVoiceAudio ? "✓ Voiceover audio mixed into video" : "Animated motion video"}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="h-7 px-2 text-xs gap-1"
+                            onClick={() => setIsVideoPreviewOpen(true)}
+                            title="Open video in player dialogue"
+                          >
+                            <Eye className="h-3 w-3" />
+                            Preview Dialog
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="default"
+                            size="sm"
+                            className="h-7 px-2 text-xs gap-1 font-semibold bg-gradient-to-r from-primary to-primary/80"
+                            onClick={handleDownloadCurrentVideo}
+                            title="Download video file with mixed audio"
+                          >
+                            <Download className="h-3 w-3" />
+                            Download Video
+                          </Button>
+                        </div>
+                      </div>
+                    )}
                     </div>
                   ) : (
                     <label className="flex cursor-pointer flex-col items-center gap-2 rounded-lg border-2 border-dashed border-muted-foreground/25 p-6 transition-colors hover:border-primary/50">

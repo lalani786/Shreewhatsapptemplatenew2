@@ -4,7 +4,8 @@
 Write-Host ""
 Write-Host "==================================================" -ForegroundColor Cyan
 Write-Host "  Update GitHub Repository (dist only)" -ForegroundColor Cyan
-Write-Host "  Repo: https://github.com/lalani786/Shreewhatsapptemplatenew2.git" -ForegroundColor Cyan
+$remoteUrl = (git remote get-url origin)
+Write-Host "  Repo: $remoteUrl" -ForegroundColor Cyan
 Write-Host "==================================================" -ForegroundColor Cyan
 Write-Host ""
 
@@ -19,6 +20,7 @@ if ($LASTEXITCODE -ne 0) {
 
 Write-Host ""
 Write-Host "Step 2: Preparing dist bundle commit..." -ForegroundColor Yellow
+git fetch origin main
 $gitDir = "$PSScriptRoot\.git"
 $tempIndex = "$PSScriptRoot\.git\temp_dist_index"
 if (Test-Path $tempIndex) { Remove-Item $tempIndex -Force }
@@ -47,4 +49,4 @@ if ($LASTEXITCODE -ne 0) {
 
 Write-Host ""
 Write-Host "SUCCESS: GitHub repository updated with latest dist build!" -ForegroundColor Green
-Write-Host "URL: https://github.com/lalani786/Shreewhatsapptemplatenew2.git" -ForegroundColor Green
+Write-Host "URL: $remoteUrl" -ForegroundColor Green

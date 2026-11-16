@@ -70,6 +70,7 @@ export type Database = {
           meta_app_id: string | null
           nvidia_api_key: string | null
           pexels_api_key: string | null
+          pollinations_api_key: string | null
           stability_api_key: string | null
           updated_at: string
           user_id: string
@@ -88,6 +89,7 @@ export type Database = {
           meta_app_id?: string | null
           nvidia_api_key?: string | null
           pexels_api_key?: string | null
+          pollinations_api_key?: string | null
           stability_api_key?: string | null
           updated_at?: string
           user_id: string
@@ -106,6 +108,7 @@ export type Database = {
           meta_app_id?: string | null
           nvidia_api_key?: string | null
           pexels_api_key?: string | null
+          pollinations_api_key?: string | null
           stability_api_key?: string | null
           updated_at?: string
           user_id?: string

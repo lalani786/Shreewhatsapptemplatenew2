@@ -18,6 +18,8 @@ import {
   fetchPollinationsApiKeyInfo,
   fetchPollinationsImageModelIds,
   resolvePollinationsImageAccess,
+  savePollinationsApiKey,
+  loadPollinationsApiKeyFromSupabase,
   type PollinationsApiKeyCheck,
   type PollinationsImageAccess,
 } from "@/lib/pollinationsKey";
@@ -162,71 +164,63 @@ export default function ApiSetup() {
   }, []);
 
   const fetchCredentials = async () => {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
-
-    const { data } = await supabase
-      .from("api_credentials")
-      .select("*")
-      .eq("user_id", user.id)
-      .single();
-
-    if (data) {
-      setFormData({
-        whatsapp_phone_id: data.whatsapp_phone_id || "",
-        whatsapp_access_token: data.whatsapp_access_token || "",
-        whatsapp_api_version: data.whatsapp_api_version || "v18.0",
-        whatsapp_business_account_id: (data as any).whatsapp_business_account_id || "",
-        meta_app_id: (data as any).meta_app_id || "",
-      });
-      setImageApiKeys({
-        pollinations_api_key: (data as any).pollinations_api_key || "",
-        stability_api_key: data.stability_api_key || "",
-        leonardo_api_key: data.leonardo_api_key || "",
-        gemini_api_key: (data as any).gemini_api_key || "",
-        nvidia_api_key: (data as any).nvidia_api_key || "",
-        pexels_api_key: (data as any).pexels_api_key || "",
-      });
-      if (data.whatsapp_phone_id && data.whatsapp_access_token) {
-        setConnectionStatus("connected");
-      }
-    }
-
     try {
-      const { data: aiKeyData } = await (supabase as any)
-        .from("ai_api_keys")
-        .select("pollinations_api_key")
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        setIsLoading(false);
+        return;
+      }
+
+      // 1. Fetch credentials from api_credentials
+      const { data } = await supabase
+        .from("api_credentials")
+        .select("*")
         .eq("user_id", user.id)
         .maybeSingle();
-      if ((aiKeyData as any)?.pollinations_api_key) {
+
+      if (data) {
+        setFormData({
+          whatsapp_phone_id: data.whatsapp_phone_id || "",
+          whatsapp_access_token: data.whatsapp_access_token || "",
+          whatsapp_api_version: data.whatsapp_api_version || "v18.0",
+          whatsapp_business_account_id: (data as any).whatsapp_business_account_id || "",
+          meta_app_id: (data as any).meta_app_id || "",
+        });
         setImageApiKeys(prev => ({
           ...prev,
-          pollinations_api_key: (aiKeyData as any).pollinations_api_key,
+          stability_api_key: data.stability_api_key || "",
+          leonardo_api_key: data.leonardo_api_key || "",
+          gemini_api_key: (data as any).gemini_api_key || "",
+          nvidia_api_key: (data as any).nvidia_api_key || "",
+          pexels_api_key: (data as any).pexels_api_key || "",
+        }));
+        if (data.whatsapp_phone_id && data.whatsapp_access_token) {
+          setConnectionStatus("connected");
+        }
+      }
+
+      // 2. Fetch latest Pollinations API key from Supabase (ai_api_keys / api_credentials)
+      const pollKey = await loadPollinationsApiKeyFromSupabase();
+      if (pollKey) {
+        setImageApiKeys(prev => ({
+          ...prev,
+          pollinations_api_key: pollKey,
         }));
       }
-    } catch {
-      // ignore
-    }
 
-    // Check localStorage fallback for pollinations key
-    const localPollKey = localStorage.getItem("pollinations_api_key");
-    if (localPollKey) {
-      setImageApiKeys(prev => ({
-        ...prev,
-        pollinations_api_key: prev.pollinations_api_key || localPollKey,
-      }));
+      // 3. Fallback for nvidia key
+      const localNvdKey = localStorage.getItem("nvidia_api_key");
+      if (localNvdKey) {
+        setImageApiKeys(prev => ({
+          ...prev,
+          nvidia_api_key: prev.nvidia_api_key || localNvdKey,
+        }));
+      }
+    } catch (err) {
+      console.warn("Error fetching credentials in ApiSetup:", err);
+    } finally {
+      setIsLoading(false);
     }
-
-    // Check localStorage fallback for nvidia key
-    const localNvdKey = localStorage.getItem("nvidia_api_key");
-    if (localNvdKey) {
-      setImageApiKeys(prev => ({
-        ...prev,
-        nvidia_api_key: prev.nvidia_api_key || localNvdKey,
-      }));
-    }
-
-    setIsLoading(false);
   };
 
   const handleSave = async () => {
@@ -238,6 +232,7 @@ export default function ApiSetup() {
       return;
     }
 
+    // Save WhatsApp credentials to api_credentials
     const { error } = await supabase
       .from("api_credentials")
       .upsert({
@@ -248,6 +243,12 @@ export default function ApiSetup() {
         whatsapp_business_account_id: formData.whatsapp_business_account_id?.trim() || null,
         meta_app_id: formData.meta_app_id?.trim() || null,
       } as any, { onConflict: 'user_id' });
+
+    // Also persist Pollinations API key if entered in this screen
+    const pollKey = imageApiKeys.pollinations_api_key?.trim();
+    if (pollKey) {
+      await savePollinationsApiKey(pollKey);
+    }
 
     if (error) {
       console.error("Save credentials error:", error);
@@ -308,12 +309,16 @@ export default function ApiSetup() {
     }
 
     const pollKey = imageApiKeys.pollinations_api_key?.trim() || "";
-    if (pollKey) {
-      localStorage.setItem("pollinations_api_key", pollKey);
-    } else {
-      localStorage.removeItem("pollinations_api_key");
+
+    // 1. Save Pollinations API key to Supabase (ai_api_keys table + localStorage)
+    const pollResult = await savePollinationsApiKey(pollKey);
+    if (!pollResult.success && pollKey) {
+      toast.error(`Pollinations Key Error: ${pollResult.error}`);
+      setImageApiSaving(false);
+      return;
     }
 
+    // 2. Sync NVIDIA key
     const nvdKey = imageApiKeys.nvidia_api_key?.trim() || "";
     if (nvdKey) {
       localStorage.setItem("nvidia_api_key", nvdKey);
@@ -321,8 +326,10 @@ export default function ApiSetup() {
       localStorage.removeItem("nvidia_api_key");
     }
 
+    // 3. Save other keys to api_credentials
     const payload: Record<string, any> = {
       user_id: user.id,
+      pollinations_api_key: pollKey || null,
       stability_api_key: imageApiKeys.stability_api_key?.trim() || null,
       leonardo_api_key: imageApiKeys.leonardo_api_key?.trim() || null,
       gemini_api_key: imageApiKeys.gemini_api_key?.trim() || null,
@@ -334,10 +341,11 @@ export default function ApiSetup() {
       .from("api_credentials")
       .upsert(payload as any, { onConflict: "user_id" });
 
-    // Fallback if specific optional columns like nvidia_api_key or pexels_api_key fail
+    // Fallback if specific optional columns fail on api_credentials
     if (error && error.message) {
       console.warn("Primary image keys upsert issue:", error.message);
       const safePayload = { ...payload };
+      if (error.message.includes("pollinations_api_key")) delete safePayload.pollinations_api_key;
       if (error.message.includes("nvidia_api_key")) delete safePayload.nvidia_api_key;
       if (error.message.includes("pexels_api_key")) delete safePayload.pexels_api_key;
       if (error.message.includes("gemini_api_key")) delete safePayload.gemini_api_key;
@@ -346,21 +354,6 @@ export default function ApiSetup() {
         .upsert(safePayload as any, { onConflict: "user_id" });
       error = retry.error;
     }
-
-    // Also persist to ai_api_keys if table exists
-    try {
-      await (supabase as any)
-        .from("ai_api_keys")
-        .upsert({
-          user_id: user.id,
-          pollinations_api_key: pollKey || null,
-        } as any, { onConflict: "user_id" });
-    } catch {
-      // ignore
-    }
-
-    // Notify other components (like AiTemplate)
-    window.dispatchEvent(new CustomEvent("pollinations-key-updated"));
 
     if (error) {
       console.error("Save image keys error:", error);

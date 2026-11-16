@@ -1,3 +1,5 @@
+import { supabase } from "@/integrations/supabase/client";
+
 /**
  * Pollinations API key inspection (used by API Setup -> "Test Key").
  *
@@ -287,4 +289,175 @@ export function resolvePollinationsImageAccess(
   const matched = imageModelIds.filter((id) => allowed.has(id)).length;
   if (!matched) return "none";
   return matched === imageModelIds.length ? "all" : "partial";
+}
+
+// ---------------------------------------------------------------------------
+// Unified Pollinations API Key Storage & Sync (Supabase ai_api_keys + localStorage)
+// ---------------------------------------------------------------------------
+
+let memoryPollinationsApiKey: string | null = null;
+
+/**
+ * Returns the currently stored Pollinations API key (synchronous).
+ * Checks memory cache first, then localStorage.
+ */
+export function getStoredPollinationsApiKey(): string {
+  if (memoryPollinationsApiKey) return memoryPollinationsApiKey;
+  try {
+    const local = localStorage.getItem("pollinations_api_key")?.trim() || "";
+    if (local) {
+      memoryPollinationsApiKey = local;
+      return local;
+    }
+  } catch {
+    // localStorage not accessible
+  }
+  return "";
+}
+
+/**
+ * Loads the active Pollinations API key from Supabase.
+ * Checks `ai_api_keys` (dedicated table) first, then `api_credentials`.
+ * Updates localStorage and in-memory cache with the fresh value.
+ */
+export async function loadPollinationsApiKeyFromSupabase(): Promise<string> {
+  try {
+    const { data: { user } } = await supabase.auth.getUser();
+    let key = "";
+
+    if (user) {
+      // 1. Check ai_api_keys table (dedicated table in Supabase)
+      try {
+        const { data: aiData, error: aiError } = await (supabase as any)
+          .from("ai_api_keys")
+          .select("pollinations_api_key")
+          .eq("user_id", user.id)
+          .maybeSingle();
+
+        if (!aiError && aiData?.pollinations_api_key) {
+          key = aiData.pollinations_api_key.trim();
+        }
+      } catch (err) {
+        console.warn("[pollinationsKey] Could not read from ai_api_keys:", err);
+      }
+
+      // 2. Check api_credentials table as fallback
+      if (!key) {
+        try {
+          const { data: credData, error: credError } = await supabase
+            .from("api_credentials")
+            .select("pollinations_api_key" as any)
+            .eq("user_id", user.id)
+            .maybeSingle();
+
+          if (!credError && (credData as any)?.pollinations_api_key) {
+            key = ((credData as any).pollinations_api_key as string).trim();
+          }
+        } catch {
+          // column may not exist in api_credentials
+        }
+      }
+
+      // 3. If found in Supabase, update localStorage & memory cache
+      if (key) {
+        memoryPollinationsApiKey = key;
+        try {
+          localStorage.setItem("pollinations_api_key", key);
+        } catch {
+          // ignore
+        }
+        return key;
+      }
+
+      // 4. If not found in Supabase, check localStorage
+      const local = getStoredPollinationsApiKey();
+      if (local && user) {
+        // Sync local key back to Supabase so it persists across devices/sessions
+        try {
+          await (supabase as any)
+            .from("ai_api_keys")
+            .upsert({
+              user_id: user.id,
+              pollinations_api_key: local,
+              updated_at: new Date().toISOString(),
+            }, { onConflict: "user_id" });
+        } catch {
+          // ignore background sync errors
+        }
+        return local;
+      }
+    }
+  } catch (err) {
+    console.warn("[pollinationsKey] Failed to load key from Supabase:", err);
+  }
+
+  return getStoredPollinationsApiKey();
+}
+
+/**
+ * Saves the Pollinations API key to Supabase (ai_api_keys table) and local storage.
+ * Ensures the existing record is updated without creating duplicates (onConflict: user_id).
+ * Verifies Supabase update success before returning.
+ */
+export async function savePollinationsApiKey(rawApiKey: string): Promise<{ success: boolean; error?: string }> {
+  const key = rawApiKey?.trim() || "";
+
+  try {
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
+    if (authError || !user) {
+      // Still store in localStorage for offline/unauthenticated mode
+      if (key) {
+        localStorage.setItem("pollinations_api_key", key);
+        memoryPollinationsApiKey = key;
+      } else {
+        localStorage.removeItem("pollinations_api_key");
+        memoryPollinationsApiKey = "";
+      }
+      window.dispatchEvent(new CustomEvent("pollinations-key-updated", { detail: { apiKey: key } }));
+      return { success: false, error: "Please sign in to save your API key to your account." };
+    }
+
+    // 1. Primary Save: ai_api_keys table (dedicated table with user_id UNIQUE constraint)
+    const { error: aiKeyError } = await (supabase as any)
+      .from("ai_api_keys")
+      .upsert({
+        user_id: user.id,
+        pollinations_api_key: key || null,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: "user_id" });
+
+    if (aiKeyError) {
+      console.error("[pollinationsKey] Failed to save to ai_api_keys:", aiKeyError);
+      return { success: false, error: aiKeyError.message || "Failed to update Supabase configuration." };
+    }
+
+    // 2. Secondary Save: api_credentials table (if column exists)
+    try {
+      await supabase
+        .from("api_credentials")
+        .upsert({
+          user_id: user.id,
+          pollinations_api_key: key || null,
+          updated_at: new Date().toISOString(),
+        } as any, { onConflict: "user_id" });
+    } catch {
+      // Safe to ignore if column is missing on api_credentials
+    }
+
+    // 3. Update localStorage and memory cache
+    memoryPollinationsApiKey = key;
+    if (key) {
+      localStorage.setItem("pollinations_api_key", key);
+    } else {
+      localStorage.removeItem("pollinations_api_key");
+    }
+
+    // 4. Broadcast update to all listeners (SocialMedia, PhotoStudio, AiTemplate)
+    window.dispatchEvent(new CustomEvent("pollinations-key-updated", { detail: { apiKey: key } }));
+
+    return { success: true };
+  } catch (err: any) {
+    console.error("[pollinationsKey] Unexpected save error:", err);
+    return { success: false, error: err?.message || "An unexpected error occurred while saving." };
+  }
 }

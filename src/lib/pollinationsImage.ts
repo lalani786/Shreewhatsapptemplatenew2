@@ -28,6 +28,7 @@
  */
 
 import { imageSizePresets } from "@/lib/imageSizePresets";
+import { getStoredPollinationsApiKey } from "@/lib/pollinationsKey";
 
 export type PollinationsEndpoint = "unified" | "legacy";
 
@@ -103,11 +104,11 @@ export const POLLINATIONS_MODELS: PollinationsModelOption[] = [
   },
   {
     id: "sana",
-    label: "Sana (free legacy tier)",
+    label: "Sana (legacy tier — API key required)",
     endpoint: "legacy",
     supportsTypography: false,
-    requiresKey: false,
-    note: "Only model the free endpoint still serves; weak text rendering and rate limited",
+    requiresKey: true,
+    note: "Legacy endpoint — API key now required (free keyless tier closed, returns 403)",
   },
 ];
 
@@ -391,17 +392,25 @@ export interface PollinationsGenerationResult {
 export async function generatePollinationsImage(
   input: PollinationsRequestInput
 ): Promise<PollinationsGenerationResult> {
-  const hasApiKey = Boolean(input.apiKey && input.apiKey.trim());
+  const activeKey = (input.apiKey && input.apiKey.trim()) || getStoredPollinationsApiKey() || "";
+  const hasApiKey = Boolean(activeKey);
+  const activeEndpoint: PollinationsEndpoint = input.endpoint || (hasApiKey ? "unified" : "legacy");
 
-  if (!isPollinationsModelAvailable(input.model, input.endpoint, hasApiKey)) {
-    const model = getPollinationsModel(input.model);
+  const effectiveInput: PollinationsRequestInput = {
+    ...input,
+    apiKey: activeKey || null,
+    endpoint: activeEndpoint,
+  };
+
+  if (!isPollinationsModelAvailable(effectiveInput.model, effectiveInput.endpoint, hasApiKey)) {
+    const model = getPollinationsModel(effectiveInput.model);
     const reason = !model
-      ? `Unknown Pollinations model "${input.model}".`
-      : `Model "${input.model}" needs a Pollinations API key (active tier: ${input.endpoint}).`;
+      ? `Unknown Pollinations model "${effectiveInput.model}".`
+      : `Model "${effectiveInput.model}" needs a Pollinations API key (active tier: ${effectiveInput.endpoint}).`;
     throw new PollinationsImageError("model_unavailable", reason);
   }
 
-  const { url, debug } = buildPollinationsImageRequest(input);
+  const { url, debug } = buildPollinationsImageRequest(effectiveInput);
 
   // Requirement: verify/log the FINAL request before sending it (never the key).
   console.info("[pollinations] FINAL REQUEST", { ...debug });
@@ -412,7 +421,7 @@ export async function generatePollinationsImage(
     fetch(requestUrl, {
       method: "GET",
       headers: useHeader
-        ? { Accept: "image/*", Authorization: `Bearer ${input.apiKey || ""}` }
+        ? { Accept: "image/*", Authorization: `Bearer ${activeKey}` }
         : { Accept: "image/*" },
     });
 
@@ -431,7 +440,7 @@ export async function generatePollinationsImage(
     // A keyed GET can be blocked by CORS preflight; the documented browser
     // fallback is the key query parameter. The key is never logged.
     try {
-      response = await request(`${url}&key=${encodeURIComponent(input.apiKey || "")}`, false);
+      response = await request(`${url}&key=${encodeURIComponent(activeKey)}`, false);
       debug.authMode = "query";
     } catch {
       debug.durationMs = Date.now() - startedAt;

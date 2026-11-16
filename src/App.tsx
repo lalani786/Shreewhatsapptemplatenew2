@@ -90,6 +90,7 @@ const App = () => (
             <Route path="social-media" element={<SocialMedia />} />
             <Route path="photo-studio" element={<PhotoStudio />} />
             <Route path="elevenlabs-setup" element={<ElevenLabsSetup />} />
+            <Route path="elevenlabs" element={<Navigate to="/elevenlabs-setup" replace />} />
           </Route>
           <Route path="*" element={<NotFound />} />
         </Routes>

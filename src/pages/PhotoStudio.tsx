@@ -27,12 +27,15 @@ import {
 } from "@/lib/nvidiaAccess";
 import { generateNvidiaImage } from "@/lib/nvidiaService";
 import {
+  loadPollinationsApiKeyFromSupabase,
+  getStoredPollinationsApiKey,
+} from "@/lib/pollinationsKey";
+import {
   DEFAULT_LEGACY_POLLINATIONS_MODEL,
   POLLINATIONS_MODELS,
   generatePollinationsImage,
   getDefaultModelForEndpoint,
   getModelsForEndpoint,
-  isPollinationsModelAvailable,
   resolvePollinationsEndpoint,
   type PollinationsEndpoint,
 } from "@/lib/pollinationsImage";
@@ -163,7 +166,7 @@ export default function PhotoStudio() {
     const fetchKeys = async () => {
       try {
         const { data: { user } } = await supabase.auth.getUser();
-        let pollKey = localStorage.getItem("pollinations_api_key") || "";
+        const pollKey = await loadPollinationsApiKeyFromSupabase();
         let nvidiaKey = (await getStoredNvidiaApiKey()) || localStorage.getItem("nvidia_api_key") || "";
         let stabilityKey = localStorage.getItem("stability_api_key") || "";
         let leonardoKey = localStorage.getItem("leonardo_api_key") || "";
@@ -179,24 +182,6 @@ export default function PhotoStudio() {
             if (data.nvidia_api_key) nvidiaKey = data.nvidia_api_key;
             if (data.stability_api_key) stabilityKey = data.stability_api_key;
             if (data.leonardo_api_key) leonardoKey = data.leonardo_api_key;
-          }
-
-          if (!pollKey || !nvidiaKey) {
-            try {
-              const { data: aiKeyData } = await (supabase as any)
-                .from("ai_api_keys")
-                .select("pollinations_api_key, nvidia_api_key")
-                .eq("user_id", user.id)
-                .maybeSingle();
-              if ((aiKeyData as any)?.pollinations_api_key && !pollKey) {
-                pollKey = (aiKeyData as any).pollinations_api_key;
-              }
-              if ((aiKeyData as any)?.nvidia_api_key && !nvidiaKey) {
-                nvidiaKey = (aiKeyData as any).nvidia_api_key;
-              }
-            } catch {
-              // ignore
-            }
           }
         }
 
@@ -598,10 +583,11 @@ export default function PhotoStudio() {
         try {
           const { width, height } = getDimensionsFromAspectRatio(aspectRatio);
           const pollinationsKey = pollinationsApiKey || localStorage.getItem("pollinations_api_key") || "";
-          const endpoint = resolvePollinationsEndpoint(Boolean(pollinationsKey));
-          const modelToUse = isPollinationsModelAvailable(activePollinationsModel, endpoint, Boolean(pollinationsKey))
-            ? activePollinationsModel
-            : getDefaultModelForEndpoint(endpoint);
+          // Resolve endpoint from the selected model's definition (not just from key presence)
+          // so the user's explicit model choice is always honoured.
+          const selectedModelDef = POLLINATIONS_MODELS.find((m) => m.id === activePollinationsModel);
+          const endpoint = selectedModelDef?.endpoint ?? resolvePollinationsEndpoint(Boolean(pollinationsKey));
+          const modelToUse = activePollinationsModel || getDefaultModelForEndpoint(endpoint);
 
           const res = await generatePollinationsImage({
             prompt: fullPrompt,
@@ -647,29 +633,38 @@ export default function PhotoStudio() {
       }
 
       // 5. Robust direct Pollinations fallback verifying binary image data
+      // NOTE: Pollinations has closed its free/keyless tier — ALL requests (including
+      // the legacy "sana" model) return 403 without an API key. Skip this fallback
+      // entirely when no key is present to avoid a guaranteed network error.
       if (!imageUrl) {
-        try {
-          const { width, height } = getDimensionsFromAspectRatio(aspectRatio);
-          const pollinationsKey = pollinationsApiKey || localStorage.getItem("pollinations_api_key") || "";
-          const endpoint = resolvePollinationsEndpoint(Boolean(pollinationsKey));
-          const modelToUse = isPollinationsModelAvailable(activePollinationsModel, endpoint, Boolean(pollinationsKey))
-            ? activePollinationsModel
-            : getDefaultModelForEndpoint(endpoint);
+        const pollinationsKey = pollinationsApiKey || localStorage.getItem("pollinations_api_key") || "";
+        if (pollinationsKey) {
+          try {
+            const { width, height } = getDimensionsFromAspectRatio(aspectRatio);
+            const endpoint = resolvePollinationsEndpoint(true); // key is present
+            const selectedModelDef = POLLINATIONS_MODELS.find((m) => m.id === activePollinationsModel);
+            const modelMatchesEndpoint = selectedModelDef?.endpoint === endpoint && (!selectedModelDef?.requiresKey || true);
+            const modelToUse = modelMatchesEndpoint
+              ? activePollinationsModel
+              : getDefaultModelForEndpoint(endpoint);
 
-          const res = await generatePollinationsImage({
-            prompt: fullPrompt,
-            model: modelToUse,
-            width,
-            height,
-            endpoint,
-            seed: Math.floor(Math.random() * 2147483647),
-            apiKey: pollinationsKey || null,
-          });
-          if (res?.imageUrl) {
-            imageUrl = res.imageUrl;
+            const res = await generatePollinationsImage({
+              prompt: fullPrompt,
+              model: modelToUse,
+              width,
+              height,
+              endpoint,
+              seed: Math.floor(Math.random() * 2147483647),
+              apiKey: pollinationsKey,
+            });
+            if (res?.imageUrl) {
+              imageUrl = res.imageUrl;
+            }
+          } catch (fallbackErr: any) {
+            console.error("Fallback generation failed:", fallbackErr);
           }
-        } catch (fallbackErr: any) {
-          console.error("Fallback generation failed:", fallbackErr);
+        } else {
+          console.warn("[PhotoStudio] Skipping Pollinations fallback — no API key configured and the free tier is closed.");
         }
       }
 
@@ -845,9 +840,9 @@ export default function PhotoStudio() {
                       </SelectTrigger>
                       <SelectContent>
                         {POLLINATIONS_MODELS.map((model) => {
-                          const available = isPollinationsModelAvailable(model.id, pollinationsEndpoint, hasPollinationsKey);
+                          const needsKey = model.requiresKey && !hasPollinationsKey;
                           return (
-                            <SelectItem key={model.id} value={model.id} disabled={!available}>
+                            <SelectItem key={model.id} value={model.id}>
                               <div className="flex items-center justify-between w-full gap-2">
                                 <span className="font-medium text-xs">{model.label}</span>
                                 {model.supportsTypography && (
@@ -855,8 +850,8 @@ export default function PhotoStudio() {
                                     Typography
                                   </Badge>
                                 )}
-                                {!available && (
-                                  <span className="text-[10px] text-destructive ml-auto">API key required</span>
+                                {needsKey && (
+                                  <span className="text-[10px] text-amber-500 ml-auto">Key recommended</span>
                                 )}
                               </div>
                             </SelectItem>
@@ -867,7 +862,7 @@ export default function PhotoStudio() {
                     <p className="text-[10px] text-muted-foreground">
                       {hasPollinationsKey
                         ? "Connected to Pollinations Unified catalog with your custom API key."
-                        : "Free tier active. Configure POLLINATIONS_API_KEY in API Setup to unlock Gemini 3 Pro, Flux.2 Pro, and Ideogram."}
+                        : "You can select any model. Add a POLLINATIONS_API_KEY in API Setup for best results with HD models (Gemini 3 Pro, FLUX.2 Pro, Ideogram)."}
                     </p>
                   </div>
                 )}
