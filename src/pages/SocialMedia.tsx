@@ -3,6 +3,7 @@ import { useLocation, useNavigate, Link } from "react-router-dom";
 import { LiveFeed } from "@/components/social/LiveFeed";
 import { createPromoVideo } from "@/lib/createPromoVideo";
 import { createPromoVideoWithAudio } from "@/lib/createPromoVideoWithAudio";
+import { convertWebmToMp4, isWebMVideo, isMp4Video } from "@/lib/videoConverter";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -385,6 +386,9 @@ export default function SocialMedia() {
   });
   const [isGeneratingVideo, setIsGeneratingVideo] = useState(false);
   const [isGeneratingVideoAudio, setIsGeneratingVideoAudio] = useState(false);
+  const [isConvertingVideo, setIsConvertingVideo] = useState(false);
+  const [conversionProgress, setConversionProgress] = useState<number | null>(null);
+  const [conversionStatusText, setConversionStatusText] = useState<string>("");
   const [isVideoPreviewOpen, setIsVideoPreviewOpen] = useState(false);
   const [voiceoverText, setVoiceoverText] = useState("");
   const [isPreviewingVoice, setIsPreviewingVoice] = useState(false);
@@ -1735,16 +1739,31 @@ export default function SocialMedia() {
 
 
 
-      const ext = (videoBlob.type || "").includes("mp4") ? "mp4" : "webm";
-      const videoFile = new File([videoBlob], `promo_${Date.now()}.${ext}`, { type: videoBlob.type });
+      let finalVideoBlob: Blob = videoBlob;
+      let ext = (finalVideoBlob.type || "").includes("mp4") ? "mp4" : "webm";
+      let videoFile = new File([finalVideoBlob], `promo_${Date.now()}.${ext}`, { type: finalVideoBlob.type });
+
+      // If Instagram is selected, automatically convert to MP4 for Reels compatibility
+      if (selectedPlatforms.includes("instagram") && ext !== "mp4") {
+        toast.info("Transcoding promo video to MP4 for Instagram Reels...");
+        try {
+          const mp4 = await convertWebmToMp4(finalVideoBlob);
+          finalVideoBlob = mp4;
+          videoFile = mp4;
+          ext = "mp4";
+        } catch (convErr) {
+          console.warn("Auto MP4 conversion during promo video creation deferred:", convErr);
+        }
+      }
+
       // Upload to storage so video shows reliably and is postable
       let publicVideoUrl: string | null = null;
       try {
         const { data: { user } } = await supabase.auth.getUser();
         if (user) {
           const path = `${user.id}/promo_${Date.now()}.${ext}`;
-          const cleanType = (videoBlob.type || "").split(";")[0] || `video/${ext}`;
-          const { error: upErr } = await supabase.storage.from("whatsapp-media").upload(path, videoBlob, {
+          const cleanType = (finalVideoBlob.type || "").split(";")[0] || `video/${ext}`;
+          const { error: upErr } = await supabase.storage.from("whatsapp-media").upload(path, finalVideoBlob, {
             contentType: cleanType,
             upsert: false,
           });
@@ -1757,7 +1776,7 @@ export default function SocialMedia() {
         console.warn("Promo video storage upload failed:", e);
       }
       setMediaFile(videoFile);
-      setMediaPreview(publicVideoUrl || URL.createObjectURL(videoBlob));
+      setMediaPreview(publicVideoUrl || URL.createObjectURL(finalVideoBlob));
       setMediaUrl(publicVideoUrl);
       setIsVideoPreviewOpen(true);
       toast.success("Promo video generated successfully! Opening preview…");
@@ -1942,8 +1961,22 @@ export default function SocialMedia() {
         });
       }
 
-      const ext = (blob.type || "").includes("mp4") ? "mp4" : "webm";
-      const file = new File([blob], `ai_video_audio_${Date.now()}.${ext}`, { type: blob.type });
+      let finalBlob = blob;
+      let ext = (finalBlob.type || "").includes("mp4") ? "mp4" : "webm";
+      let file = new File([finalBlob], `ai_video_audio_${Date.now()}.${ext}`, { type: finalBlob.type });
+
+      // If Instagram is selected, automatically convert to MP4 for Reels compatibility
+      if (selectedPlatforms.includes("instagram") && ext !== "mp4") {
+        toast.info("Transcoding video with audio to MP4 for Instagram Reels...");
+        try {
+          const mp4 = await convertWebmToMp4(finalBlob);
+          finalBlob = mp4;
+          file = mp4;
+          ext = "mp4";
+        } catch (convErr) {
+          console.warn("Auto MP4 conversion during audio video creation deferred:", convErr);
+        }
+      }
 
       // Upload to storage
       let publicUrl: string | null = null;
@@ -1951,10 +1984,10 @@ export default function SocialMedia() {
         const { data: { user } } = await supabase.auth.getUser();
         if (user) {
           const path = `${user.id}/ai_video_audio_${Date.now()}.${ext}`;
-          const cleanType = (blob.type || "").split(";")[0] || `video/${ext}`;
+          const cleanType = (finalBlob.type || "").split(";")[0] || `video/${ext}`;
           const { error: upErr } = await supabase.storage
             .from("whatsapp-media")
-            .upload(path, blob, { contentType: cleanType, upsert: false });
+            .upload(path, finalBlob, { contentType: cleanType, upsert: false });
           if (!upErr) {
             const { data: pub } = supabase.storage.from("whatsapp-media").getPublicUrl(path);
             publicUrl = pub.publicUrl;
@@ -1965,7 +1998,7 @@ export default function SocialMedia() {
       }
 
       setMediaFile(file);
-      setMediaPreview(publicUrl || URL.createObjectURL(blob));
+      setMediaPreview(publicUrl || URL.createObjectURL(finalBlob));
       setMediaUrl(publicUrl);
       setIsVideoPreviewOpen(true);
       toast.success("AI video with audio generated! Opening preview…");
@@ -1976,17 +2009,76 @@ export default function SocialMedia() {
     setIsGeneratingVideoAudio(false);
   };
 
-  const uploadMediaToStorage = async (userId: string): Promise<string | null> => {
-    if (!mediaFile && !mediaUrl) return null;
-    if (mediaUrl && /^https?:\/\//i.test(mediaUrl)) return mediaUrl;
+  const handleConvertCurrentVideoToMp4 = async () => {
+    const target = mediaFile || mediaUrl;
+    if (!target) {
+      toast.error("No video available to convert");
+      return;
+    }
+    setIsConvertingVideo(true);
+    setConversionProgress(0);
+    setConversionStatusText("Initializing FFmpeg...");
+    const toastId = toast.loading("Converting video to MP4 for Instagram Reels (H.264/AAC)...");
+
+    try {
+      const mp4File = await convertWebmToMp4(target, (pct, status) => {
+        setConversionProgress(pct);
+        setConversionStatusText(status);
+        toast.loading(`${status}`, { id: toastId });
+      });
+
+      setMediaFile(mp4File);
+      const newPreviewUrl = URL.createObjectURL(mp4File);
+      setMediaPreview(newPreviewUrl);
+
+      // Upload converted MP4 to Supabase Storage so it is public and persistent
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user) {
+          toast.loading("Saving converted MP4 to storage...", { id: toastId });
+          const path = `${user.id}/social/${Date.now()}_converted.mp4`;
+          const { error: upErr } = await supabase.storage.from("whatsapp-media").upload(path, mp4File, {
+            contentType: "video/mp4",
+            upsert: false,
+          });
+          if (!upErr) {
+            const { data: pub } = supabase.storage.from("whatsapp-media").getPublicUrl(path);
+            setMediaUrl(pub.publicUrl);
+          }
+        }
+      } catch (upEx) {
+        console.warn("Storage upload after conversion failed:", upEx);
+      }
+
+      toast.success("Video successfully converted to MP4! Ready for Instagram Reels.", { id: toastId });
+    } catch (err: any) {
+      console.error("Video conversion failed:", err);
+      toast.error(`Video conversion failed: ${err.message || "Unknown error"}`, { id: toastId });
+    } finally {
+      setIsConvertingVideo(false);
+      setConversionProgress(null);
+      setConversionStatusText("");
+    }
+  };
+
+  const uploadMediaToStorage = async (
+    userId: string,
+    overrideFile?: File | null,
+    overrideUrl?: string | null
+  ): Promise<string | null> => {
+    const activeFile = overrideFile !== undefined ? overrideFile : mediaFile;
+    const activeUrl = overrideUrl !== undefined ? overrideUrl : mediaUrl;
+
+    if (!activeFile && !activeUrl) return null;
+    if (activeUrl && /^https?:\/\//i.test(activeUrl) && !activeFile) return activeUrl;
 
     let uploadBody: File | Blob;
-    let contentType = mediaFile?.type || "image/png";
+    let contentType = activeFile?.type || "image/png";
 
-    if (mediaFile) {
-      uploadBody = mediaFile;
-    } else if (mediaUrl?.startsWith("data:")) {
-      const response = await fetch(mediaUrl);
+    if (activeFile) {
+      uploadBody = activeFile;
+    } else if (activeUrl?.startsWith("data:")) {
+      const response = await fetch(activeUrl);
       const generatedBlob = await response.blob();
 
       uploadBody = generatedBlob;
@@ -2060,28 +2152,51 @@ export default function SocialMedia() {
         return;
       }
 
+      // Auto-detect WebM video and transcode to MP4 when Instagram is selected
+      let fileToPost = mediaFile;
+      let urlToPost = mediaUrl;
+
+      const isWebM = await isWebMVideo(fileToPost || urlToPost);
+      const isTargetingInstagram = selectedPlatforms.includes("instagram");
+
+      if (isWebM && isTargetingInstagram) {
+        setIsConvertingVideo(true);
+        const convToastId = toast.loading("Converting WebM video to MP4 for Instagram Reels (H.264 / AAC / yuv420p)...");
+        try {
+          const convertedMp4File = await convertWebmToMp4(fileToPost || urlToPost!, (pct, status) => {
+            setConversionProgress(pct);
+            setConversionStatusText(status);
+            toast.loading(status, { id: convToastId });
+          });
+          fileToPost = convertedMp4File;
+          setMediaFile(convertedMp4File);
+          urlToPost = null; // Clear old WebM URL so uploadMediaToStorage uploads the converted MP4
+          setMediaPreview(URL.createObjectURL(convertedMp4File));
+          toast.success("Converted video to MP4 successfully! Publishing to Instagram Reels...", { id: convToastId });
+        } catch (convErr: any) {
+          console.error("Auto MP4 conversion failed:", convErr);
+          toast.error(
+            `Failed to convert WebM to MP4 for Instagram: ${convErr.message || "Unknown error"}. Instagram requires MP4.`,
+            { id: convToastId, duration: 8000 }
+          );
+          setIsPosting(false);
+          setIsConvertingVideo(false);
+          if (includesYouTube) setYoutubeUpload({ status: "idle", message: "" });
+          return;
+        } finally {
+          setIsConvertingVideo(false);
+          setConversionProgress(null);
+          setConversionStatusText("");
+        }
+      }
+
       let uploadedMediaUrl: string | null = null;
-      if (mediaFile || mediaUrl) {
-        uploadedMediaUrl = await uploadMediaToStorage(user.id);
+      if (fileToPost || urlToPost) {
+        uploadedMediaUrl = await uploadMediaToStorage(user.id, fileToPost, urlToPost);
       }
 
       // Determine media type
-      const hasVideo = isVideoFile(mediaFile) || isVideoUrl(uploadedMediaUrl);
-      const isWebMVideo =
-        hasVideo &&
-        ((mediaFile && (mediaFile.name.toLowerCase().endsWith(".webm") || mediaFile.type.includes("webm"))) ||
-          (uploadedMediaUrl && uploadedMediaUrl.toLowerCase().includes(".webm")));
-
-      if (selectedPlatforms.includes("instagram") && isWebMVideo) {
-        toast.error(
-          "Instagram Reels requires MP4 video. WebM is not supported by Instagram. Switch provider to Pexels or upload an MP4 video.",
-          { duration: 6000 }
-        );
-        setIsPosting(false);
-        if (includesYouTube) setYoutubeUpload({ status: "idle", message: "" });
-        return;
-      }
-
+      const hasVideo = isVideoFile(fileToPost) || isVideoUrl(uploadedMediaUrl);
       const detectedMediaType = uploadedMediaUrl ? (hasVideo ? "video" : "image") : null;
 
       // Create post records for each platform
@@ -2544,19 +2659,46 @@ export default function SocialMedia() {
                 {selectedPlatforms.includes("instagram") &&
                   ((mediaFile && (mediaFile.name.toLowerCase().endsWith(".webm") || mediaFile.type.includes("webm"))) ||
                     (mediaUrl && mediaUrl.toLowerCase().includes(".webm"))) && (
-                    <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-2.5 text-xs text-amber-800 dark:text-amber-200 flex items-center justify-between gap-2">
-                      <div className="flex-1">
-                        <strong>Instagram requires MP4:</strong> WebM videos cannot be posted to Instagram Reels. Switch provider to Pexels to generate an MP4, or deselect Instagram.
+                    <div className="rounded-md border border-blue-500/40 bg-blue-500/10 p-3 text-xs text-blue-900 dark:text-blue-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5">
+                      <div className="flex-1 space-y-0.5">
+                        <div className="font-semibold flex items-center gap-1.5 text-blue-700 dark:text-blue-300">
+                          <Film className="h-4 w-4" />
+                          Instagram Reels MP4 Transcoding Ready
+                        </div>
+                        <p className="text-muted-foreground dark:text-blue-200/80">
+                          Your video is in WebM format. It will be automatically converted to MP4 (H.264/AAC, yuv420p) with original audio when posting to Instagram Reels.
+                        </p>
                       </div>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        className="h-7 text-xs border-amber-500/40 hover:bg-amber-500/20"
-                        onClick={() => setSelectedPlatforms((prev) => prev.filter((p) => p !== "instagram"))}
-                      >
-                        Deselect Instagram
-                      </Button>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <Button
+                          type="button"
+                          size="sm"
+                          disabled={isConvertingVideo}
+                          className="h-8 text-xs bg-blue-600 hover:bg-blue-700 text-white font-medium"
+                          onClick={handleConvertCurrentVideoToMp4}
+                        >
+                          {isConvertingVideo ? (
+                            <>
+                              <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                              {conversionStatusText || "Converting..."}
+                            </>
+                          ) : (
+                            <>
+                              <Sparkles className="h-3.5 w-3.5 mr-1.5" />
+                              Convert to MP4 Now
+                            </>
+                          )}
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          className="h-8 text-xs border-blue-500/30 hover:bg-blue-500/20"
+                          onClick={() => setSelectedPlatforms((prev) => prev.filter((p) => p !== "instagram"))}
+                        >
+                          Deselect IG
+                        </Button>
+                      </div>
                     </div>
                   )}
 

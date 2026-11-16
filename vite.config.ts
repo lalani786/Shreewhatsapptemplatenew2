@@ -52,6 +52,9 @@ export default defineConfig(() => ({
     },
   },
   plugins: [react(), spaFallbackPlugin()],
+  optimizeDeps: {
+    exclude: ["@ffmpeg/ffmpeg", "@ffmpeg/util"],
+  },
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
