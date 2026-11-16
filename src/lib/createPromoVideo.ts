@@ -1,8 +1,11 @@
 /**
  * Creates an animated promo video from an image using Canvas + MediaRecorder.
  * Applies a smooth Ken Burns (zoom + pan) effect with optional text overlay.
- * Returns a Blob of the video (webm format).
+ * Returns a direct MP4 Blob (video/mp4, H.264, yuv420p, faststart)
+ * compliant with Instagram Reels, Facebook, YouTube, and other platforms.
  */
+
+import { convertWebmToMp4 } from "./videoConverter";
 
 interface PromoVideoOptions {
   imageUrl: string;
@@ -30,18 +33,25 @@ export async function createPromoVideo({
   canvas.height = height;
   const ctx = canvas.getContext("2d")!;
 
-  // Setup MediaRecorder
+  // Setup stream capture
   const stream = canvas.captureStream(30);
   const chunks: Blob[] = [];
 
-  const mimeType = MediaRecorder.isTypeSupported("video/mp4")
-    ? "video/mp4"
-    : MediaRecorder.isTypeSupported("video/webm;codecs=vp9")
-      ? "video/webm;codecs=vp9"
-      : "video/webm";
+  const mimeCandidates = [
+    "video/webm;codecs=vp9",
+    "video/webm;codecs=vp8",
+    "video/webm",
+  ];
+  let captureMime = "video/webm";
+  for (const c of mimeCandidates) {
+    if (typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported(c)) {
+      captureMime = c;
+      break;
+    }
+  }
 
   const recorder = new MediaRecorder(stream, {
-    mimeType,
+    mimeType: captureMime,
     videoBitsPerSecond: 4_000_000,
   });
 
@@ -50,9 +60,20 @@ export async function createPromoVideo({
   };
 
   return new Promise((resolve, reject) => {
-    recorder.onstop = () => {
-      const blob = new Blob(chunks, { type: mimeType });
-      resolve(blob);
+    recorder.onstop = async () => {
+      try {
+        const rawBlob = new Blob(chunks, { type: captureMime });
+        // Generate direct Instagram-compliant MP4 (H.264, yuv420p, faststart)
+        const mp4File = await convertWebmToMp4(rawBlob);
+        const mp4Blob = new Blob([await mp4File.arrayBuffer()], { type: "video/mp4" });
+        resolve(mp4Blob);
+      } catch (err) {
+        reject(
+          new Error(
+            `Failed to generate direct MP4 promo video: ${err instanceof Error ? err.message : String(err)}`
+          )
+        );
+      }
     };
     recorder.onerror = () => reject(new Error("Video recording failed"));
 

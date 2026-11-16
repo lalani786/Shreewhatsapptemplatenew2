@@ -296,3 +296,19 @@ export async function convertWebmToMp4(
     } catch { /* ignore */ }
   }
 }
+
+/**
+ * Validates that an AI video generation result is a genuine MP4 video file.
+ * Throws a clear provider compatibility error if the output is not direct MP4.
+ */
+export async function assertMp4Video(
+  target: Blob | string,
+  providerName = "AI Video Provider"
+): Promise<void> {
+  const valid = await isMp4Video(target);
+  if (!valid) {
+    throw new Error(
+      `Provider "${providerName}" failed output check: Video is not in direct MP4 format. Instagram Reels requires direct MP4 (H.264/AAC, yuv420p).`
+    );
+  }
+}

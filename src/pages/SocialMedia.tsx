@@ -3,7 +3,7 @@ import { useLocation, useNavigate, Link } from "react-router-dom";
 import { LiveFeed } from "@/components/social/LiveFeed";
 import { createPromoVideo } from "@/lib/createPromoVideo";
 import { createPromoVideoWithAudio } from "@/lib/createPromoVideoWithAudio";
-import { convertWebmToMp4, isWebMVideo, isMp4Video } from "@/lib/videoConverter";
+import { convertWebmToMp4, isWebMVideo, isMp4Video, assertMp4Video, isMp4Bytes } from "@/lib/videoConverter";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -847,7 +847,7 @@ export default function SocialMedia() {
     }
     const { data } = await supabase
       .from("api_credentials")
-      .select("stability_api_key, leonardo_api_key, nvidia_api_key, elevenlabs_api_key")
+      .select("stability_api_key, leonardo_api_key, nvidia_api_key, elevenlabs_api_key, runway_api_key, pexels_api_key")
       .eq("user_id", user.id)
       .maybeSingle();
     if (data) {
@@ -860,6 +860,8 @@ export default function SocialMedia() {
         nvidia_api_key: !!data.nvidia_api_key,
         elevenlabs_api_key: !!(data as any).elevenlabs_api_key,
         pollinations_api_key: Boolean(pollKey),
+        runway_api_key: !!(data as any).runway_api_key,
+        pexels_api_key: !!(data as any).pexels_api_key,
       });
       if (data.nvidia_api_key) setImageProvider("nvidia");
       else if (data.stability_api_key) setImageProvider("stability");
@@ -1549,15 +1551,15 @@ export default function SocialMedia() {
 
       if (mediaFile) {
         blob = mediaFile;
-        ext = mediaFile.name.toLowerCase().endsWith(".mp4") ? "mp4" : "webm";
+        ext = mediaFile.name.toLowerCase().endsWith(".webm") ? "webm" : "mp4";
       } else if (mediaPreview?.startsWith("blob:") || mediaPreview?.startsWith("data:")) {
         const res = await fetch(mediaPreview);
         blob = await res.blob();
-        ext = (blob.type || "").includes("mp4") ? "mp4" : "webm";
+        ext = (blob.type || "").includes("webm") ? "webm" : "mp4";
       } else if (mediaUrl) {
         const res = await fetch(mediaUrl);
         blob = await res.blob();
-        ext = (blob.type || "").includes("mp4") ? "mp4" : "webm";
+        ext = (blob.type || "").includes("webm") ? "webm" : "mp4";
       }
 
       if (!blob) {
@@ -1580,16 +1582,36 @@ export default function SocialMedia() {
     }
   };
 
+  const validateProviderVideoCapability = (provider: string): void => {
+    const MP4_CAPABLE_PROVIDERS = [
+      "auto",
+      "pollinations",
+      "nvidia",
+      "cosmos",
+      "pexels",
+      "runway",
+      "stability",
+      "leonardo",
+      "lovable_ai",
+    ];
+    if (!MP4_CAPABLE_PROVIDERS.includes(provider)) {
+      throw new Error(
+        `Provider "${provider}" does not support direct MP4 video output. AI video generation requires direct MP4 (H.264/AAC, yuv420p) format.`
+      );
+    }
+  };
+
   const handleGeneratePromoVideo = async () => {
     if (!imagePrompt.trim()) {
       toast.error("Please enter a prompt for the promo video");
       return;
     }
+    validateProviderVideoCapability(imageProvider);
     setIsGeneratingVideo(true);
     try {
       let videoBlob: Blob;
       if (imageProvider === "pexels") {
-        toast.info("Finding a stock video on Pexels...");
+        toast.info("Finding a stock video on Pexels (Direct MP4)...");
         const { data: px, error: pxErr } = await supabase.functions.invoke("pexels-search", {
           body: { query: imagePrompt.trim(), kind: "video" },
         });
@@ -1599,7 +1621,73 @@ export default function SocialMedia() {
         if (!res.ok) throw new Error("Could not download the Pexels video");
         videoBlob = await res.blob();
         if (videoBlob.size > 50 * 1024 * 1024) throw new Error("Pexels video is over 50 MB. Try a different prompt.");
+        if (!(await isMp4Video(videoBlob))) {
+          throw new Error("Pexels video provider did not return direct MP4 format.");
+        }
         if (px.credit) toast.info(`Video by ${px.credit} on Pexels`);
+      } else if (imageProvider === "runway") {
+        toast.info("Generating AI Video with Runway Gen-3 (Direct MP4)...");
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) throw new Error("Please log in to use Runway AI Video");
+        const { data: cred } = await supabase
+          .from("api_credentials")
+          .select("runway_api_key")
+          .eq("user_id", user.id)
+          .maybeSingle();
+        const runwayKey = (cred as any)?.runway_api_key;
+        if (!runwayKey) {
+          throw new Error(
+            "Runway API key not configured. Add your RUNWAY_API_KEY in API Setup to generate direct Runway MP4 videos."
+          );
+        }
+        toast.info("Requesting Runway Gen-3 MP4 generation...");
+        const res = await fetch("https://api.dev.runwayml.com/v1/image_to_video", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${runwayKey}`,
+            "Content-Type": "application/json",
+            "X-Runway-Version": "2024-09-13",
+          },
+          body: JSON.stringify({
+            promptText: imagePrompt.trim(),
+            model: "gen3a_turbo",
+            duration: 5,
+            ratio: "1280:768",
+            format: "mp4",
+          }),
+        });
+        if (!res.ok) {
+          const errText = await res.text();
+          throw new Error(`Runway API error (${res.status}): ${errText.slice(0, 180)}`);
+        }
+        const taskData = await res.json();
+        const taskId = taskData.id;
+        let videoUrl = "";
+        for (let i = 0; i < 30; i++) {
+          await new Promise((r) => setTimeout(r, 3000));
+          const checkRes = await fetch(`https://api.dev.runwayml.com/v1/tasks/${taskId}`, {
+            headers: {
+              Authorization: `Bearer ${runwayKey}`,
+              "X-Runway-Version": "2024-09-13",
+            },
+          });
+          if (checkRes.ok) {
+            const checkData = await checkRes.json();
+            if (checkData.status === "SUCCEEDED" && checkData.output?.[0]) {
+              videoUrl = checkData.output[0];
+              break;
+            }
+            if (checkData.status === "FAILED") {
+              throw new Error(`Runway video generation failed: ${checkData.failure || "Unknown error"}`);
+            }
+          }
+        }
+        if (!videoUrl) throw new Error("Runway video generation timed out");
+        const dlRes = await fetch(videoUrl);
+        videoBlob = await dlRes.blob();
+        if (!(await isMp4Video(videoBlob))) {
+          throw new Error("Runway provider returned non-MP4 output. MP4 format is required.");
+        }
       } else {
         // Step 1: Generate AI image from prompt
         toast.info(
@@ -1739,32 +1827,18 @@ export default function SocialMedia() {
 
 
 
-      let finalVideoBlob: Blob = videoBlob;
-      let ext = (finalVideoBlob.type || "").includes("mp4") ? "mp4" : "webm";
-      let videoFile = new File([finalVideoBlob], `promo_${Date.now()}.${ext}`, { type: finalVideoBlob.type });
+      // Direct MP4 output verification
+      await assertMp4Video(videoBlob, imageProvider);
 
-      // If Instagram is selected, automatically convert to MP4 for Reels compatibility
-      if (selectedPlatforms.includes("instagram") && ext !== "mp4") {
-        toast.info("Transcoding promo video to MP4 for Instagram Reels...");
-        try {
-          const mp4 = await convertWebmToMp4(finalVideoBlob);
-          finalVideoBlob = mp4;
-          videoFile = mp4;
-          ext = "mp4";
-        } catch (convErr) {
-          console.warn("Auto MP4 conversion during promo video creation deferred:", convErr);
-        }
-      }
-
+      const videoFile = new File([videoBlob], `promo_${Date.now()}.mp4`, { type: "video/mp4" });
       // Upload to storage so video shows reliably and is postable
       let publicVideoUrl: string | null = null;
       try {
         const { data: { user } } = await supabase.auth.getUser();
         if (user) {
-          const path = `${user.id}/promo_${Date.now()}.${ext}`;
-          const cleanType = (finalVideoBlob.type || "").split(";")[0] || `video/${ext}`;
-          const { error: upErr } = await supabase.storage.from("whatsapp-media").upload(path, finalVideoBlob, {
-            contentType: cleanType,
+          const path = `${user.id}/promo_${Date.now()}.mp4`;
+          const { error: upErr } = await supabase.storage.from("whatsapp-media").upload(path, videoBlob, {
+            contentType: "video/mp4",
             upsert: false,
           });
           if (!upErr) {
@@ -1776,10 +1850,10 @@ export default function SocialMedia() {
         console.warn("Promo video storage upload failed:", e);
       }
       setMediaFile(videoFile);
-      setMediaPreview(publicVideoUrl || URL.createObjectURL(finalVideoBlob));
+      setMediaPreview(publicVideoUrl || URL.createObjectURL(videoBlob));
       setMediaUrl(publicVideoUrl);
       setIsVideoPreviewOpen(true);
-      toast.success("Promo video generated successfully! Opening preview…");
+      toast.success("Direct MP4 promo video generated! Ready for Instagram Reels.");
     } catch (err: any) {
       console.error("Video gen error:", err);
       const msg = err?.message || "Failed to generate promo video";
@@ -1799,6 +1873,7 @@ export default function SocialMedia() {
       toast.error("Please enter a prompt for the AI video");
       return;
     }
+    validateProviderVideoCapability(imageProvider);
     setIsGeneratingVideoAudio(true);
     try {
       // Step 1: AI image
@@ -1961,33 +2036,20 @@ export default function SocialMedia() {
         });
       }
 
-      let finalBlob = blob;
-      let ext = (finalBlob.type || "").includes("mp4") ? "mp4" : "webm";
-      let file = new File([finalBlob], `ai_video_audio_${Date.now()}.${ext}`, { type: finalBlob.type });
+      // Direct MP4 output verification
+      await assertMp4Video(blob, imageProvider);
 
-      // If Instagram is selected, automatically convert to MP4 for Reels compatibility
-      if (selectedPlatforms.includes("instagram") && ext !== "mp4") {
-        toast.info("Transcoding video with audio to MP4 for Instagram Reels...");
-        try {
-          const mp4 = await convertWebmToMp4(finalBlob);
-          finalBlob = mp4;
-          file = mp4;
-          ext = "mp4";
-        } catch (convErr) {
-          console.warn("Auto MP4 conversion during audio video creation deferred:", convErr);
-        }
-      }
+      const file = new File([blob], `ai_video_audio_${Date.now()}.mp4`, { type: "video/mp4" });
 
-      // Upload to storage
+      // Upload to storage as direct MP4
       let publicUrl: string | null = null;
       try {
         const { data: { user } } = await supabase.auth.getUser();
         if (user) {
-          const path = `${user.id}/ai_video_audio_${Date.now()}.${ext}`;
-          const cleanType = (finalBlob.type || "").split(";")[0] || `video/${ext}`;
+          const path = `${user.id}/ai_video_audio_${Date.now()}.mp4`;
           const { error: upErr } = await supabase.storage
             .from("whatsapp-media")
-            .upload(path, finalBlob, { contentType: cleanType, upsert: false });
+            .upload(path, blob, { contentType: "video/mp4", upsert: false });
           if (!upErr) {
             const { data: pub } = supabase.storage.from("whatsapp-media").getPublicUrl(path);
             publicUrl = pub.publicUrl;
@@ -1998,10 +2060,10 @@ export default function SocialMedia() {
       }
 
       setMediaFile(file);
-      setMediaPreview(publicUrl || URL.createObjectURL(finalBlob));
+      setMediaPreview(publicUrl || URL.createObjectURL(blob));
       setMediaUrl(publicUrl);
       setIsVideoPreviewOpen(true);
-      toast.success("AI video with audio generated! Opening preview…");
+      toast.success("Direct MP4 video with synchronized audio generated! Opening preview…");
     } catch (err: any) {
       console.error("AI video+audio error:", err);
       toast.error(err?.message || "Failed to generate AI video with audio");
@@ -2979,6 +3041,9 @@ export default function SocialMedia() {
                             Leonardo AI {availableKeys.leonardo_api_key ? "• Active" : ""}
                           </SelectItem>
                           <SelectItem value="cosmos">NVIDIA Cosmos (Video / Foundation)</SelectItem>
+                          <SelectItem value="runway">
+                            Runway Gen-3 (AI Video • MP4) {availableKeys.runway_api_key ? "• Active" : ""}
+                          </SelectItem>
                           <SelectItem value="pexels">Pexels (Stock Video & Photo)</SelectItem>
                           <SelectItem value="lovable_ai">Shree AI Engine (Built-in Gemini)</SelectItem>
                         </SelectContent>
@@ -3070,6 +3135,23 @@ export default function SocialMedia() {
                         </div>
                         <p className="text-[10px] text-muted-foreground">
                           Photorealistic and creative artistic imagery tailored for social campaigns.
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Runway AI Info Panel */}
+                    {imageProvider === "runway" && (
+                      <div className="rounded-md border bg-muted/30 p-2.5 text-xs space-y-1.5">
+                        <div className="flex items-center justify-between">
+                          <span className="font-medium text-xs">Runway Gen-3 Alpha (AI Video)</span>
+                          {availableKeys.runway_api_key ? (
+                            <Badge className="text-[10px] bg-emerald-600 text-white">Active ✓</Badge>
+                          ) : (
+                            <Badge variant="destructive" className="text-[10px]">Key not configured</Badge>
+                          )}
+                        </div>
+                        <p className="text-[10px] text-muted-foreground">
+                          Direct MP4 video generation (H.264/AAC, yuv420p) for cinematic Instagram Reels and promo videos.
                         </p>
                       </div>
                     )}

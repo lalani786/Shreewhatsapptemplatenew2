@@ -1,8 +1,11 @@
 /**
  * Creates a promo video (Ken Burns animated image) WITH mixed audio:
  * an optional voiceover layered over optional background music.
- * Returns a webm/mp4 Blob containing video + synchronized mixed audio.
+ * Returns a direct MP4 Blob (video/mp4, H.264, AAC, yuv420p, faststart)
+ * compliant with Instagram Reels, Facebook, YouTube, and other platforms.
  */
+
+import { convertWebmToMp4 } from "./videoConverter";
 
 interface PromoVideoAudioOptions {
   imageUrl: string;
@@ -269,9 +272,21 @@ export async function createPromoVideoWithAudio(opts: PromoVideoAudioOptions): P
   };
 
   return new Promise<Blob>((resolve, reject) => {
-    recorder.onstop = () => {
+    recorder.onstop = async () => {
       try { audioCtx.close(); } catch { /* ignore */ }
-      resolve(new Blob(chunks, { type: mimeType }));
+      try {
+        const rawBlob = new Blob(chunks, { type: mimeType });
+        // Directly produce Instagram-compliant MP4 (H.264 / AAC / yuv420p / faststart)
+        const mp4File = await convertWebmToMp4(rawBlob);
+        const mp4Blob = new Blob([await mp4File.arrayBuffer()], { type: "video/mp4" });
+        resolve(mp4Blob);
+      } catch (err) {
+        reject(
+          new Error(
+            `Failed to generate direct MP4 video with audio: ${err instanceof Error ? err.message : String(err)}`
+          )
+        );
+      }
     };
     recorder.onerror = () => reject(new Error("Recording failed"));
 

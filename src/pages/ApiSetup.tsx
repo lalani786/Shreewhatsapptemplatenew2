@@ -42,6 +42,7 @@ const IMAGE_API_KEYS: ImageApiKey[] = [
   { key: "stability_api_key", label: "STABILITY_API_KEY", placeholder: "sk-...", description: "Stability AI - Image generation" },
   { key: "leonardo_api_key", label: "LEONARDO_API_KEY", placeholder: "leo-...", description: "Leonardo AI - Creative images" },
   { key: "gemini_api_key", label: "GEMINI_API_KEY", placeholder: "AIza...", description: "Google Gemini - Text & prompt generation" },
+  { key: "runway_api_key", label: "RUNWAY_API_KEY", placeholder: "key_...", description: "Runway Gen-3 / Gen-2 - AI video generation in direct MP4 (runwayml.com)" },
   { key: "pexels_api_key", label: "PEXELS_API_KEY", placeholder: "Your Pexels API key", description: "Pexels - Free stock videos & photos for promo videos (pexels.com/api)" },
 ];
 
