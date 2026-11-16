@@ -15,8 +15,24 @@ const json = (body: unknown, status = 200) =>
 
 const DEFAULT_VOICE_ID = "JBFqnCBsd6RMkjVDRZzb"; // George
 
-async function synthesizeFullVoice(text: string): Promise<Uint8Array | null> {
-  const lang = /[\u0900-\u097F]/.test(text) ? "hi" : "en";
+async function synthesizeFullVoice(text: string, requestedLang?: string): Promise<Uint8Array | null> {
+  let lang = "en";
+  if (requestedLang) {
+    const l = requestedLang.toLowerCase();
+    if (l.startsWith("hi")) lang = "hi";
+    else if (l.startsWith("gu")) lang = "gu";
+    else if (l.startsWith("ur")) lang = "ur";
+    else if (l.startsWith("ar")) lang = "ar";
+    else if (l.startsWith("en")) lang = "en";
+  } else if (/[\u0A80-\u0AFF]/.test(text)) {
+    lang = "gu";
+  } else if (/[\u0679\u067E\u0686\u0688\u0691\u0698\u06A9\u06AF\u06BA\u06BE\u06CC\u06D2]/.test(text)) {
+    lang = "ur";
+  } else if (/[\u0600-\u06FF]/.test(text)) {
+    lang = "ar";
+  } else if (/[\u0900-\u097F]/.test(text)) {
+    lang = "hi";
+  }
   const chunks: string[] = [];
   const sentences = text.match(/[^.!?\n]+[.!?\n]+|[^.!?\n]+$/g) || [text];
   for (const s of sentences) {
@@ -72,12 +88,12 @@ serve(async (req) => {
 
   try {
     const body = await req.json().catch(() => ({}));
-    const { voiceText, musicPrompt, voiceId, musicDurationSeconds, action, apiKey: userApiKey } = body;
+    const { voiceText, musicPrompt, voiceId, musicDurationSeconds, action, apiKey: userApiKey, language } = body;
 
     if (action === "free_tts") {
       const trimmed = (voiceText || "").toString().trim();
       if (!trimmed) return json({ error: "voiceText is required" }, 200);
-      const audioBytes = await synthesizeFullVoice(trimmed);
+      const audioBytes = await synthesizeFullVoice(trimmed, language);
       if (!audioBytes) return json({ error: "Could not generate full voice audio" }, 200);
       return json({
         voiceAudio: base64Encode(audioBytes),
@@ -220,7 +236,7 @@ serve(async (req) => {
           // Generate full complete voiceover using multi-chunk backup engine
           try {
             console.log("ElevenLabs error, synthesizing complete voiceover with multi-chunk engine...");
-            const fullAudio = await synthesizeFullVoice(trimmedVoice);
+            const fullAudio = await synthesizeFullVoice(trimmedVoice, language);
             if (fullAudio) {
               result.voiceAudio = base64Encode(fullAudio);
               result.voiceNotice = isQuota

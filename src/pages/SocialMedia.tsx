@@ -4,6 +4,16 @@ import { LiveFeed } from "@/components/social/LiveFeed";
 import { createPromoVideo } from "@/lib/createPromoVideo";
 import { createPromoVideoWithAudio } from "@/lib/createPromoVideoWithAudio";
 import { convertWebmToMp4, isWebMVideo, isMp4Video, assertMp4Video, isMp4Bytes } from "@/lib/videoConverter";
+import {
+  VideoDuration,
+  VideoAspectRatio,
+  VIDEO_DURATIONS,
+  VIDEO_ASPECT_RATIOS,
+  getVideoDimensions,
+  SUPPORTED_LANGUAGES,
+  getVoicesForLanguage,
+  isRtlLanguage,
+} from "@/types/ai.types";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -390,7 +400,29 @@ export default function SocialMedia() {
   const [conversionProgress, setConversionProgress] = useState<number | null>(null);
   const [conversionStatusText, setConversionStatusText] = useState<string>("");
   const [isVideoPreviewOpen, setIsVideoPreviewOpen] = useState(false);
+  const [videoDuration, setVideoDuration] = useState<VideoDuration>(15);
+  const [videoAspectRatio, setVideoAspectRatio] = useState<VideoAspectRatio>("9:16");
+  const [voiceoverLanguage, setVoiceoverLanguage] = useState<string>("hi-IN");
+  const [voiceGender, setVoiceGender] = useState<"male" | "female">("female");
+  const [selectedVoiceId, setSelectedVoiceId] = useState<string>("hi-female-1");
   const [voiceoverText, setVoiceoverText] = useState("");
+
+  const handleLanguageChange = (newLangId: string) => {
+    setVoiceoverLanguage(newLangId);
+    const voices = getVoicesForLanguage(newLangId, voiceGender);
+    if (voices.length > 0) {
+      setSelectedVoiceId(voices[0].id);
+    }
+    // Invalidate previous audio and script caches! Never reuse Hindi audio for Gujarati, Urdu or Arabic!
+    setLatestVoiceAudio(null);
+    setLatestVoiceScript(null);
+    if (voicePreviewAudioRef.current) {
+      try { voicePreviewAudioRef.current.pause(); } catch {}
+      voicePreviewAudioRef.current = null;
+    }
+    const langObj = SUPPORTED_LANGUAGES.find((l) => l.id === newLangId);
+    toast.info(`Language set to ${langObj?.label || newLangId}. Audio cache cleared.`);
+  };
   const [isPreviewingVoice, setIsPreviewingVoice] = useState(false);
   const [isDownloadingVoice, setIsDownloadingVoice] = useState(false);
   const [latestVoiceAudio, setLatestVoiceAudio] = useState<string | null>(null);
@@ -488,7 +520,7 @@ export default function SocialMedia() {
       if (isBackup) {
         toast.info("Generating full voice preview with backup engine...");
         const fbRes = await supabase.functions.invoke("generate-video-audio", {
-          body: { voiceText: text, action: "free_tts" },
+          body: { voiceText: text, action: "free_tts", language: voiceoverLanguage },
         });
         if (fbRes.data?.voiceAudio) {
           setLatestVoiceAudio(fbRes.data.voiceAudio);
@@ -525,7 +557,7 @@ export default function SocialMedia() {
       }
 
       const { data, error } = await supabase.functions.invoke("generate-video-audio", {
-        body: { voiceText: text, musicPrompt: "" },
+        body: { voiceText: text, musicPrompt: "", voiceId: selectedVoiceId, language: voiceoverLanguage },
       });
       if (error) throw error;
       if (data?.error) throw new Error(data.error);
@@ -540,7 +572,7 @@ export default function SocialMedia() {
 
           // Auto-preview full voice using backup engine
           const fbRes = await supabase.functions.invoke("generate-video-audio", {
-            body: { voiceText: text, action: "free_tts" },
+            body: { voiceText: text, action: "free_tts", language: voiceoverLanguage },
           });
           if (fbRes.data?.voiceAudio) {
             setLatestVoiceAudio(fbRes.data.voiceAudio);
@@ -651,7 +683,7 @@ export default function SocialMedia() {
 
       toast.info("Generating full voiceover audio for download...");
       const { data, error } = await supabase.functions.invoke("generate-video-audio", {
-        body: { voiceText: text, musicPrompt: "" },
+        body: { voiceText: text, musicPrompt: "", voiceId: selectedVoiceId, language: voiceoverLanguage },
       });
       if (error) throw error;
       if (data?.error) throw new Error(data.error);
@@ -667,7 +699,7 @@ export default function SocialMedia() {
           // Auto-generate full audio using backup engine so the user ALWAYS gets the complete MP3!
           toast.info("ElevenLabs quota reached. Downloading full voiceover via backup engine...");
           const fbRes = await supabase.functions.invoke("generate-video-audio", {
-            body: { voiceText: text, action: "free_tts" },
+            body: { voiceText: text, action: "free_tts", language: voiceoverLanguage },
           });
           if (fbRes.data?.voiceAudio) {
             setLatestVoiceAudio(fbRes.data.voiceAudio);
@@ -1805,23 +1837,30 @@ export default function SocialMedia() {
               : "Creating promo video with motion effects..."
         );
 
+        const { width, height } = getVideoDimensions(videoAspectRatio);
+        const durationMs = videoDuration * 1000;
+        const isRTL = isRtlLanguage(voiceoverLanguage);
+
         if (voiceAudioToMix) {
           videoBlob = await createPromoVideoWithAudio({
             imageUrl,
             text: voiceScript,
             voiceAudioBase64: voiceAudioToMix,
-            width: 1080,
-            height: 1080,
-            minDurationMs: 6000,
-            maxDurationMs: 25000,
+            width,
+            height,
+            durationMs,
+            minDurationMs: durationMs,
+            maxDurationMs: durationMs,
+            isRTL,
           });
         } else {
           videoBlob = await createPromoVideo({
             imageUrl,
             text: postContent.trim() || imagePrompt.trim(),
-            durationMs: 6000,
-            width: 1080,
-            height: 1080,
+            durationMs,
+            width,
+            height,
+            isRTL,
           });
         }
       }
@@ -1967,7 +2006,7 @@ export default function SocialMedia() {
       if (!voiceAudio && voiceText) {
         try {
           const audioRes = await supabase.functions.invoke("generate-video-audio", {
-            body: { voiceText, musicPrompt, musicDurationSeconds: 12, apiKey: userElevenLabsKey || undefined },
+            body: { voiceText, musicPrompt, musicDurationSeconds: videoDuration, voiceId: selectedVoiceId, language: voiceoverLanguage, apiKey: userElevenLabsKey || undefined },
           });
           if (audioRes.data) {
             const { voiceAudio: va, musicAudio: ma, voiceError, musicError } = audioRes.data || {};
@@ -1981,7 +2020,7 @@ export default function SocialMedia() {
               if (voiceError.toLowerCase().includes("quota_exceeded")) {
                 toast.info("ElevenLabs quota reached. Using free backup voice engine for video…");
                 const fbRes = await supabase.functions.invoke("generate-video-audio", {
-                  body: { voiceText, action: "free_tts" },
+                  body: { voiceText, action: "free_tts", language: voiceoverLanguage },
                 });
                 if (fbRes.data?.voiceAudio) {
                   voiceAudio = fbRes.data.voiceAudio;
@@ -1999,7 +2038,7 @@ export default function SocialMedia() {
           toast.info("Falling back to backup voice engine…");
           try {
             const fbRes = await supabase.functions.invoke("generate-video-audio", {
-              body: { voiceText, action: "free_tts" },
+              body: { voiceText, action: "free_tts", language: voiceoverLanguage },
             });
             if (fbRes.data?.voiceAudio) {
               voiceAudio = fbRes.data.voiceAudio;
@@ -2014,6 +2053,9 @@ export default function SocialMedia() {
 
       // Step 3: mix into video
       toast.info("Rendering promo video…");
+      const { width: renderW, height: renderH } = getVideoDimensions(videoAspectRatio);
+      const renderDurMs = videoDuration * 1000;
+      const isRTL = isRtlLanguage(voiceoverLanguage);
       let blob: Blob;
       if (voiceAudio || musicAudio) {
         toast.info("Mixing video with audio…");
@@ -2022,19 +2064,22 @@ export default function SocialMedia() {
           text: voiceText,
           voiceAudioBase64: voiceAudio,
           musicAudioBase64: musicAudio,
-          width: 1080,
-          height: 1080,
-          minDurationMs: 8000,
-          maxDurationMs: 20000,
+          width: renderW,
+          height: renderH,
+          durationMs: renderDurMs,
+          minDurationMs: renderDurMs,
+          maxDurationMs: renderDurMs,
+          isRTL,
         });
       } else {
         toast.info("Rendering animated promo video…");
         blob = await createPromoVideo({
           imageUrl,
           text: voiceText,
-          durationMs: 8000,
-          width: 1080,
-          height: 1080,
+          durationMs: renderDurMs,
+          width: renderW,
+          height: renderH,
+          isRTL,
         });
       }
 
@@ -3267,6 +3312,50 @@ export default function SocialMedia() {
                         )}
                       </div>
                     )}
+                    {/* Video Duration & Aspect Ratio Controls */}
+                    <div className="rounded-md border bg-muted/20 p-2 space-y-2 text-xs">
+                      <div className="flex items-center justify-between">
+                        <Label className="text-[11px] font-medium flex items-center gap-1">
+                          <Clock className="h-3 w-3 text-primary" /> Video Duration
+                        </Label>
+                        <div className="flex items-center gap-1">
+                          {VIDEO_DURATIONS.map((d) => (
+                            <button
+                              key={d.duration}
+                              type="button"
+                              onClick={() => setVideoDuration(d.duration)}
+                              className={`rounded px-1.5 py-0.5 text-[10px] font-medium border transition-colors ${
+                                videoDuration === d.duration
+                                  ? "border-primary bg-primary text-primary-foreground font-semibold"
+                                  : "border-border bg-card text-muted-foreground hover:border-primary/50"
+                              }`}
+                            >
+                              {d.duration}s
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <Label className="text-[11px] font-medium">Aspect Ratio</Label>
+                        <div className="flex items-center gap-1">
+                          {(Object.keys(VIDEO_ASPECT_RATIOS) as VideoAspectRatio[]).map((r) => (
+                            <button
+                              key={r}
+                              type="button"
+                              onClick={() => setVideoAspectRatio(r)}
+                              className={`rounded px-1.5 py-0.5 text-[10px] font-medium border transition-colors ${
+                                videoAspectRatio === r
+                                  ? "border-primary bg-primary text-primary-foreground font-semibold"
+                                  : "border-border bg-card text-muted-foreground hover:border-primary/50"
+                              }`}
+                            >
+                              {r}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+
                     <div className="grid grid-cols-2 gap-2">
                       <Button
                         variant="outline"
@@ -3300,7 +3389,7 @@ export default function SocialMedia() {
                         ) : (
                           <Film className="mr-2 h-3 w-3" />
                         )}
-                        Promo Video
+                        Promo Video ({videoDuration}s)
                       </Button>
                     </div>
                     {/* AI Voiceover & Audio Engine */}
@@ -3433,6 +3522,87 @@ export default function SocialMedia() {
                             </a>
                           </div>
                         )}
+                      </div>
+
+                      {/* Multilingual Voice Selection */}
+                      <div className="space-y-2 rounded-md bg-background/70 border border-border/60 p-2 text-xs">
+                        <div className="flex items-center justify-between">
+                          <Label className="text-[11px] font-medium flex items-center gap-1">
+                            <Sparkles className="h-3 w-3 text-primary" /> Voice Language
+                          </Label>
+                          {isRtlLanguage(voiceoverLanguage) && (
+                            <Badge variant="outline" className="text-[10px] text-amber-600 dark:text-amber-400">
+                              RTL Subtitles
+                            </Badge>
+                          )}
+                        </div>
+                        <Select value={voiceoverLanguage} onValueChange={handleLanguageChange}>
+                          <SelectTrigger className="h-7 text-xs bg-background">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {SUPPORTED_LANGUAGES.map((lang) => (
+                              <SelectItem key={lang.id} value={lang.id} className="text-xs">
+                                {lang.flagEmoji} {lang.label} ({lang.nativeName})
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+
+                        <div className="grid grid-cols-2 gap-1.5 pt-1">
+                          <div className="space-y-1">
+                            <Label className="text-[10px] text-muted-foreground">Gender</Label>
+                            <div className="grid grid-cols-2 gap-1">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setVoiceGender("female");
+                                  const voices = getVoicesForLanguage(voiceoverLanguage, "female");
+                                  if (voices.length > 0) setSelectedVoiceId(voices[0].id);
+                                  setLatestVoiceAudio(null);
+                                }}
+                                className={`rounded border py-0.5 text-[10px] font-medium ${
+                                  voiceGender === "female"
+                                    ? "border-primary bg-primary/15 text-primary font-semibold"
+                                    : "border-border text-muted-foreground"
+                                }`}
+                              >
+                                Female
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setVoiceGender("male");
+                                  const voices = getVoicesForLanguage(voiceoverLanguage, "male");
+                                  if (voices.length > 0) setSelectedVoiceId(voices[0].id);
+                                  setLatestVoiceAudio(null);
+                                }}
+                                className={`rounded border py-0.5 text-[10px] font-medium ${
+                                  voiceGender === "male"
+                                    ? "border-primary bg-primary/15 text-primary font-semibold"
+                                    : "border-border text-muted-foreground"
+                                }`}
+                              >
+                                Male
+                              </button>
+                            </div>
+                          </div>
+                          <div className="space-y-1">
+                            <Label className="text-[10px] text-muted-foreground">Voice Accent</Label>
+                            <Select value={selectedVoiceId} onValueChange={setSelectedVoiceId}>
+                              <SelectTrigger className="h-6 text-[11px] bg-background">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {getVoicesForLanguage(voiceoverLanguage, voiceGender).map((v) => (
+                                  <SelectItem key={v.id} value={v.id} className="text-xs">
+                                    {v.name}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        </div>
                       </div>
 
                       {/* Script Input & Controls */}

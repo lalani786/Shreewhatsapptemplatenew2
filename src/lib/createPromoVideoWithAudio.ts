@@ -16,8 +16,10 @@ interface PromoVideoAudioOptions {
   voiceVolume?: number; // 0-1, default 1.0
   width?: number;
   height?: number;
+  durationMs?: number; // Explicit duration in ms
   minDurationMs?: number;
   maxDurationMs?: number;
+  isRTL?: boolean;
 }
 
 async function audioSourceToArrayBuffer(src: string): Promise<ArrayBuffer> {
@@ -68,7 +70,8 @@ function drawFrame(
   w: number,
   h: number,
   progress: number,
-  text: string
+  text: string,
+  forceRTL?: boolean
 ) {
   const zoom = 1.0 + 0.25 * easeInOutCubic(progress);
   const panX = 20 * easeInOutCubic(progress);
@@ -109,7 +112,9 @@ function drawFrame(
 
     ctx.globalAlpha = opacity;
     const fontSize = Math.floor(w / 22);
-    ctx.font = `bold ${fontSize}px sans-serif`;
+    const rtl = forceRTL ?? /[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]/.test(text);
+    ctx.direction = rtl ? "rtl" : "ltr";
+    ctx.font = `bold ${fontSize}px 'Segoe UI', 'Noto Sans', Tahoma, sans-serif`;
     ctx.fillStyle = "#fff";
     ctx.textAlign = "center";
     ctx.textBaseline = "bottom";
@@ -136,8 +141,10 @@ export async function createPromoVideoWithAudio(opts: PromoVideoAudioOptions): P
     musicAudioBase64,
     width = 1080,
     height = 1080,
-    minDurationMs = 6000,
-    maxDurationMs = 30000,
+    durationMs,
+    minDurationMs = 5000,
+    maxDurationMs = 60000,
+    isRTL,
   } = opts;
 
   const img = await loadImage(imageUrl);
@@ -199,10 +206,12 @@ export async function createPromoVideoWithAudio(opts: PromoVideoAudioOptions): P
   // Determine duration
   const voiceDur = voiceBuffer ? voiceBuffer.duration * 1000 : 0;
   const musicDur = musicBuffer ? musicBuffer.duration * 1000 : 0;
-  const targetDurMs = Math.min(
-    maxDurationMs,
-    Math.max(minDurationMs, voiceDur ? Math.ceil(voiceDur + 800) : (musicDur || minDurationMs))
-  );
+  const targetDurMs = durationMs
+    ? durationMs
+    : Math.min(
+        maxDurationMs,
+        Math.max(minDurationMs, voiceDur ? Math.ceil(voiceDur + 800) : (musicDur || minDurationMs))
+      );
 
   // Audio graph -> MediaStreamDestination
   const dest = audioCtx.createMediaStreamDestination();
@@ -336,7 +345,7 @@ export async function createPromoVideoWithAudio(opts: PromoVideoAudioOptions): P
         return;
       }
       const progress = Math.min(1, elapsed / targetDurMs);
-      drawFrame(ctx, img, width, height, progress, text);
+      drawFrame(ctx, img, width, height, progress, text, isRTL);
       frame++;
       requestAnimationFrame(renderFrame);
     };

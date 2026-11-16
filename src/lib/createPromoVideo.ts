@@ -15,15 +15,17 @@ interface PromoVideoOptions {
   height?: number;
   /** Zoom intensity: 0 = no zoom, 1 = subtle (~1.15x), 2 = strong (~1.45x) */
   zoomIntensity?: number;
+  isRTL?: boolean;
 }
 
 export async function createPromoVideo({
   imageUrl,
   text = "",
-  durationMs = 6000,
+  durationMs = 15000,
   width = 1080,
   height = 1080,
   zoomIntensity = 1,
+  isRTL,
 }: PromoVideoOptions): Promise<Blob> {
   // Load image
   const img = await loadImage(imageUrl);
@@ -125,7 +127,7 @@ export async function createPromoVideo({
       }
 
       const progress = frame / totalFrames;
-      drawFrame(ctx, img, width, height, progress, text, zoomIntensity);
+      drawFrame(ctx, img, width, height, progress, text, zoomIntensity, isRTL);
       frame++;
       requestAnimationFrame(renderFrame);
     };
@@ -151,7 +153,8 @@ function drawFrame(
   h: number,
   progress: number,
   text: string,
-  zoomIntensity: number = 1
+  zoomIntensity: number = 1,
+  forceRTL?: boolean
 ) {
   // Ken Burns: slow zoom in + slight pan; zoomIntensity scales the zoom delta
   const zoomStart = 1.0;
@@ -201,7 +204,9 @@ function drawFrame(
     // Text
     ctx.globalAlpha = textOpacity;
     const fontSize = Math.floor(w / 22);
-    ctx.font = `bold ${fontSize}px sans-serif`;
+    const rtl = forceRTL ?? /[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]/.test(text);
+    ctx.direction = rtl ? "rtl" : "ltr";
+    ctx.font = `bold ${fontSize}px 'Segoe UI', 'Noto Sans', Tahoma, sans-serif`;
     ctx.fillStyle = "#ffffff";
     ctx.textAlign = "center";
     ctx.textBaseline = "bottom";

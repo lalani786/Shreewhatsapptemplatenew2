@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -15,10 +15,54 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { Sparkles, Copy, Save, Loader2, Image, MessageSquare, ImagePlus, Palette, FileText, Video, CheckCircle, Wand2, Share2, Send, ExternalLink } from "lucide-react";
+import {
+  Sparkles,
+  Copy,
+  Save,
+  Loader2,
+  Image,
+  MessageSquare,
+  ImagePlus,
+  Palette,
+  FileText,
+  Video,
+  CheckCircle,
+  Wand2,
+  Share2,
+  Send,
+  ExternalLink,
+  Film,
+  Mic,
+  Volume2,
+  Download,
+  Play,
+  Pause,
+  RefreshCw,
+  Clock,
+  Globe,
+  Radio,
+} from "lucide-react";
 import { toast } from "sonner";
 import { optimizeMarketingImagePrompt } from "@/lib/promptOptimizer";
 import DirectSocialPostDialog from "@/components/social/DirectSocialPostDialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  VideoDuration,
+  VideoAspectRatio,
+  VideoQuality,
+  VIDEO_DURATIONS,
+  VIDEO_ASPECT_RATIOS,
+  getVideoDimensions,
+  SUPPORTED_LANGUAGES,
+  SUPPORTED_VOICES,
+  getVoicesForLanguage,
+  isRtlLanguage,
+  getScriptPromptGuidance,
+  VoiceOption,
+} from "@/types/ai.types";
+import { createPromoVideo } from "@/lib/createPromoVideo";
+import { createPromoVideoWithAudio } from "@/lib/createPromoVideoWithAudio";
+import { assertMp4Video } from "@/lib/videoConverter";
 import {
   getNvidiaAccessFailureSummary,
   hasNvidiaFluxAccess,
@@ -179,6 +223,25 @@ export default function AiTemplate() {
   const [abResults, setAbResults] = useState<PollinationsAbResult[]>([]);
   const [isComparingModels, setIsComparingModels] = useState(false);
 
+  // Video Configuration & Multilingual Voiceover State
+  const [videoDuration, setVideoDuration] = useState<VideoDuration>(15);
+  const [videoAspectRatio, setVideoAspectRatio] = useState<VideoAspectRatio>("9:16");
+  const [videoQuality, setVideoQuality] = useState<VideoQuality>("1080p");
+  const [voiceoverLanguage, setVoiceoverLanguage] = useState<string>("hi-IN");
+  const [voiceGender, setVoiceGender] = useState<"male" | "female">("female");
+  const [selectedVoiceId, setSelectedVoiceId] = useState<string>("hi-female-1");
+  const [videoVoiceoverText, setVideoVoiceoverText] = useState<string>("");
+  const [videoVoiceoverAudio, setVideoVoiceoverAudio] = useState<string | null>(null);
+  const [videoVoiceoverScript, setVideoVoiceoverScript] = useState<string | null>(null);
+  const [userElevenLabsKey, setUserElevenLabsKey] = useState<string>("");
+  const [isPreviewingVoice, setIsPreviewingVoice] = useState(false);
+  const [isDownloadingVoice, setIsDownloadingVoice] = useState(false);
+  const [isGeneratingVideo, setIsGeneratingVideo] = useState(false);
+  const [generatedVideoBlob, setGeneratedVideoBlob] = useState<Blob | null>(null);
+  const [generatedVideoUrl, setGeneratedVideoUrl] = useState<string | null>(null);
+  const [isVideoPreviewOpen, setIsVideoPreviewOpen] = useState(false);
+  const voicePreviewAudioRef = useRef<HTMLAudioElement | null>(null);
+
   const hasPollinationsKey = Boolean(pollinationsApiKey);
   const pollinationsEndpoint: PollinationsEndpoint = resolvePollinationsEndpoint(hasPollinationsKey);
   const pollinationsModelOptions = getModelsForEndpoint(pollinationsEndpoint);
@@ -230,16 +293,20 @@ export default function AiTemplate() {
     if (!user) return;
     const { data } = await supabase
       .from("api_credentials")
-      .select("stability_api_key, leonardo_api_key, gemini_api_key, nvidia_api_key")
+      .select("stability_api_key, leonardo_api_key, gemini_api_key, nvidia_api_key, elevenlabs_api_key")
       .eq("user_id", user.id)
       .maybeSingle();
     if (data) {
+      if (data.elevenlabs_api_key) {
+        setUserElevenLabsKey(data.elevenlabs_api_key);
+      }
       setAvailableKeys(prev => ({
         ...prev,
         stability_api_key: !!data.stability_api_key,
         leonardo_api_key: !!data.leonardo_api_key,
         gemini_api_key: !!data.gemini_api_key,
         nvidia_api_key: !!data.nvidia_api_key,
+        elevenlabs_api_key: !!data.elevenlabs_api_key,
         pollinations_api_key: prev.pollinations_api_key || !!localStorage.getItem("pollinations_api_key"),
       }));
       setTextProvider("gemini");
@@ -280,23 +347,459 @@ export default function AiTemplate() {
     }
   };
 
+  const handleLanguageChange = (newLangId: string) => {
+    setVoiceoverLanguage(newLangId);
+    const voices = getVoicesForLanguage(newLangId, voiceGender);
+    if (voices.length > 0) {
+      setSelectedVoiceId(voices[0].id);
+    }
+    // Invalidate previous language audio and script caches! Never reuse Hindi audio for Gujarati, Urdu or Arabic!
+    setVideoVoiceoverAudio(null);
+    setVideoVoiceoverScript(null);
+    setGeneratedVideoBlob(null);
+    setGeneratedVideoUrl(null);
+    if (voicePreviewAudioRef.current) {
+      try {
+        voicePreviewAudioRef.current.pause();
+      } catch {}
+      voicePreviewAudioRef.current = null;
+    }
+    const langObj = SUPPORTED_LANGUAGES.find((l) => l.id === newLangId);
+    toast.info(`Language set to ${langObj?.label || newLangId}. Audio & video cache cleared.`);
+  };
+
+  const handleGenderChange = (newGender: "male" | "female") => {
+    setVoiceGender(newGender);
+    const voices = getVoicesForLanguage(voiceoverLanguage, newGender);
+    if (voices.length > 0) {
+      setSelectedVoiceId(voices[0].id);
+    }
+    // Invalidate audio cache on voice change
+    setVideoVoiceoverAudio(null);
+    setVideoVoiceoverScript(null);
+  };
+
+  const handlePreviewVoiceover = async () => {
+    const text = (videoVoiceoverText || generatedContent.template || "").trim();
+    if (!text) {
+      toast.error("Please generate or enter a voiceover script first");
+      return;
+    }
+    if (voicePreviewAudioRef.current) {
+      try {
+        voicePreviewAudioRef.current.pause();
+      } catch {}
+        voicePreviewAudioRef.current = null;
+    }
+    setIsPreviewingVoice(true);
+    try {
+      const langObj = SUPPORTED_LANGUAGES.find((l) => l.id === voiceoverLanguage);
+      toast.info(`Synthesizing voiceover (${langObj?.label || voiceoverLanguage})...`);
+
+      const res = await supabase.functions.invoke("generate-video-audio", {
+        body: {
+          voiceText: text,
+          voiceId: selectedVoiceId,
+          language: voiceoverLanguage,
+          apiKey: userElevenLabsKey || undefined,
+        },
+      });
+
+      let audioBase64: string | null = null;
+      if (res.data?.voiceAudio) {
+        audioBase64 = res.data.voiceAudio;
+      } else if (res.data?.voiceError) {
+        console.warn("ElevenLabs voice error, trying backup free TTS:", res.data.voiceError);
+        const fbRes = await supabase.functions.invoke("generate-video-audio", {
+          body: { voiceText: text, action: "free_tts", language: voiceoverLanguage },
+        });
+        if (fbRes.data?.voiceAudio) {
+          audioBase64 = fbRes.data.voiceAudio;
+        }
+      }
+
+      if (audioBase64) {
+        setVideoVoiceoverAudio(audioBase64);
+        setVideoVoiceoverScript(text);
+        const audio = new Audio(`data:audio/mpeg;base64,${audioBase64}`);
+        voicePreviewAudioRef.current = audio;
+        audio.onended = () => setIsPreviewingVoice(false);
+        audio.onerror = () => {
+          setIsPreviewingVoice(false);
+          toast.error("Audio playback error");
+        };
+        await audio.play();
+        toast.success(`Playing voice preview (${langObj?.nativeName || "Native"})`);
+      } else {
+        if ("speechSynthesis" in window) {
+          window.speechSynthesis.cancel();
+          const utterance = new SpeechSynthesisUtterance(text);
+          utterance.lang = voiceoverLanguage;
+          utterance.onend = () => setIsPreviewingVoice(false);
+          utterance.onerror = () => setIsPreviewingVoice(false);
+          window.speechSynthesis.speak(utterance);
+          toast.info("Playing preview with browser speech synthesis");
+        } else {
+          throw new Error("Unable to synthesize audio. Check ElevenLabs key or connection.");
+        }
+      }
+    } catch (err: any) {
+      console.error("Voice preview error:", err);
+      toast.error(err.message || "Failed to generate voice preview");
+      setIsPreviewingVoice(false);
+    }
+  };
+
+  const handleDownloadVoice = async () => {
+    const text = (videoVoiceoverText || generatedContent.template || "").trim();
+    if (!text) {
+      toast.error("Please generate or enter a voiceover script first");
+      return;
+    }
+    setIsDownloadingVoice(true);
+    try {
+      let audioBase64 = videoVoiceoverAudio;
+      if (!audioBase64) {
+        toast.info("Synthesizing audio for download...");
+        const res = await supabase.functions.invoke("generate-video-audio", {
+          body: {
+            voiceText: text,
+            voiceId: selectedVoiceId,
+            language: voiceoverLanguage,
+            apiKey: userElevenLabsKey || undefined,
+          },
+        });
+        if (res.data?.voiceAudio) {
+          audioBase64 = res.data.voiceAudio;
+          setVideoVoiceoverAudio(audioBase64);
+          setVideoVoiceoverScript(text);
+        } else {
+          const fbRes = await supabase.functions.invoke("generate-video-audio", {
+            body: { voiceText: text, action: "free_tts", language: voiceoverLanguage },
+          });
+          if (fbRes.data?.voiceAudio) {
+            audioBase64 = fbRes.data.voiceAudio;
+            setVideoVoiceoverAudio(audioBase64);
+            setVideoVoiceoverScript(text);
+          }
+        }
+      }
+
+      if (!audioBase64) {
+        throw new Error("Could not synthesize audio for download");
+      }
+
+      const cleanBase64 = (audioBase64.includes(",") ? audioBase64.split(",")[1] : audioBase64).replace(/\s+/g, "");
+      const binary = atob(cleanBase64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      const blob = new Blob([bytes], { type: "audio/mpeg" });
+      const blobUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = blobUrl;
+      link.download = `voiceover-${voiceoverLanguage}-${Date.now()}.mp3`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 30000);
+      toast.success("Voice audio downloaded (.mp3)");
+    } catch (err: any) {
+      console.error("Audio download error:", err);
+      toast.error(err.message || "Failed to download voice audio");
+    } finally {
+      setIsDownloadingVoice(false);
+    }
+  };
+
+  const handleGeneratePromoVideo = async () => {
+    if (!generatedContent.generatedImage) {
+      toast.error("Please generate or select a video frame image first");
+      return;
+    }
+    setIsGeneratingVideo(true);
+    try {
+      const { width, height } = getVideoDimensions(videoAspectRatio, videoQuality);
+      const durationMs = videoDuration * 1000;
+      const isRTL = isRtlLanguage(voiceoverLanguage);
+      const scriptToOverlay = (videoVoiceoverText || generatedContent.template || "").trim();
+
+      let videoBlob: Blob;
+      if (videoVoiceoverAudio) {
+        toast.info(`Creating ${videoDuration}s ${videoAspectRatio} promo video with synchronized voiceover...`);
+        videoBlob = await createPromoVideoWithAudio({
+          imageUrl: generatedContent.generatedImage,
+          text: scriptToOverlay,
+          voiceAudioBase64: videoVoiceoverAudio,
+          width,
+          height,
+          durationMs,
+          minDurationMs: durationMs,
+          maxDurationMs: durationMs,
+          isRTL,
+        });
+      } else {
+        toast.info(`Creating ${videoDuration}s ${videoAspectRatio} animated promo video...`);
+        videoBlob = await createPromoVideo({
+          imageUrl: generatedContent.generatedImage,
+          text: scriptToOverlay,
+          durationMs,
+          width,
+          height,
+          isRTL,
+        });
+      }
+
+      await assertMp4Video(videoBlob, imageProvider);
+      setGeneratedVideoBlob(videoBlob);
+      const url = URL.createObjectURL(videoBlob);
+      setGeneratedVideoUrl(url);
+      setIsVideoPreviewOpen(true);
+      toast.success(`Promo video (${videoDuration}s, ${width}×${height} MP4) generated successfully!`);
+    } catch (err: any) {
+      console.error("Promo video generation error:", err);
+      toast.error(err.message || "Failed to generate promo video");
+    } finally {
+      setIsGeneratingVideo(false);
+    }
+  };
+
+  const handleGenerateAIVideoWithAudio = async () => {
+    setIsGeneratingVideo(true);
+    try {
+      let imageUrl = generatedContent.generatedImage;
+      if (!imageUrl) {
+        toast.info("Generating video background frame first...");
+        const { width: reqW, height: reqH } = getVideoDimensions(videoAspectRatio, "720p");
+        if (imageProvider === "pollinations" || imageProvider === "auto") {
+          const res = await generatePollinationsImage({
+            prompt: generatedContent.imagePrompt || `${formData.businessType} ${formData.occasion} commercial promo background`,
+            model: selectedPollinationsModel,
+            width: reqW,
+            height: reqH,
+            endpoint: pollinationsEndpoint,
+            seed: createPollinationsSeed(),
+            apiKey: pollinationsApiKey || null,
+          });
+          imageUrl = res.imageUrl;
+        } else if (imageProvider === "nvidia" || imageProvider === "cosmos") {
+          const res = await generateNvidiaImage({
+            prompt: generatedContent.imagePrompt || `${formData.businessType} ${formData.occasion} commercial promo background`,
+            model: "flux-3-image-klein",
+            width: reqW,
+            height: reqH,
+          });
+          imageUrl = res.imageUrl;
+        } else {
+          const res = await supabase.functions.invoke("generate-template", {
+            body: {
+              type: "generate_image",
+              imagePrompt: generatedContent.imagePrompt,
+              imageProvider,
+            },
+          });
+          imageUrl = res.data?.imageUrl;
+        }
+        if (imageUrl) {
+          setGeneratedContent((prev) => ({ ...prev, generatedImage: imageUrl }));
+        }
+      }
+
+      if (!imageUrl) throw new Error("Could not produce frame for video");
+
+      let audioBase64 = videoVoiceoverAudio;
+      const scriptText = (videoVoiceoverText || generatedContent.template || "").trim();
+      if (!audioBase64 && scriptText) {
+        toast.info(`Generating ${SUPPORTED_LANGUAGES.find((l) => l.id === voiceoverLanguage)?.label || voiceoverLanguage} voiceover...`);
+        try {
+          const audioRes = await supabase.functions.invoke("generate-video-audio", {
+            body: {
+              voiceText: scriptText,
+              voiceId: selectedVoiceId,
+              language: voiceoverLanguage,
+              apiKey: userElevenLabsKey || undefined,
+            },
+          });
+          if (audioRes.data?.voiceAudio) {
+            audioBase64 = audioRes.data.voiceAudio;
+            setVideoVoiceoverAudio(audioBase64);
+            setVideoVoiceoverScript(scriptText);
+          } else {
+            const fbRes = await supabase.functions.invoke("generate-video-audio", {
+              body: { voiceText: scriptText, action: "free_tts", language: voiceoverLanguage },
+            });
+            if (fbRes.data?.voiceAudio) {
+              audioBase64 = fbRes.data.voiceAudio;
+              setVideoVoiceoverAudio(audioBase64);
+              setVideoVoiceoverScript(scriptText);
+            }
+          }
+        } catch (aErr) {
+          console.warn("Audio synthesis error:", aErr);
+        }
+      }
+
+      const { width, height } = getVideoDimensions(videoAspectRatio, videoQuality);
+      const durationMs = videoDuration * 1000;
+      const isRTL = isRtlLanguage(voiceoverLanguage);
+
+      toast.info(`Mixing and rendering ${videoDuration}s ${videoAspectRatio} promo video...`);
+      let videoBlob: Blob;
+      if (audioBase64) {
+        videoBlob = await createPromoVideoWithAudio({
+          imageUrl,
+          text: scriptText,
+          voiceAudioBase64: audioBase64,
+          width,
+          height,
+          durationMs,
+          minDurationMs: durationMs,
+          maxDurationMs: durationMs,
+          isRTL,
+        });
+      } else {
+        videoBlob = await createPromoVideo({
+          imageUrl,
+          text: scriptText,
+          durationMs,
+          width,
+          height,
+          isRTL,
+        });
+      }
+
+      await assertMp4Video(videoBlob, imageProvider);
+      setGeneratedVideoBlob(videoBlob);
+      const url = URL.createObjectURL(videoBlob);
+      setGeneratedVideoUrl(url);
+      setIsVideoPreviewOpen(true);
+      toast.success(`Video with audio (${videoDuration}s, ${width}×${height} MP4) ready!`);
+    } catch (err: any) {
+      console.error("AI Video with Audio error:", err);
+      toast.error(err.message || "Failed to generate video with audio");
+    } finally {
+      setIsGeneratingVideo(false);
+    }
+  };
+
+  const handleVideoLanguageRemix = async (newLangId: string) => {
+    handleLanguageChange(newLangId);
+    const baseScript = (videoVoiceoverText || generatedContent.template || "").trim();
+    if (!baseScript) {
+      toast.info("Please generate a base script first");
+      return;
+    }
+    setIsGenerating(true);
+    try {
+      const targetLang = SUPPORTED_LANGUAGES.find((l) => l.id === newLangId) || SUPPORTED_LANGUAGES[0];
+      const guidance = getScriptPromptGuidance(newLangId, videoDuration);
+      toast.info(`Remixing script for ${targetLang.label}...`);
+
+      const remixPrompt = `Translate and culturally adapt the following promotional marketing script into genuine native ${targetLang.label} (${targetLang.nativeName}).
+
+Original Script:
+"${baseScript}"
+
+${guidance}
+
+CRITICAL RULES:
+- Return ONLY the final translated native script.
+- DO NOT add explanation, quotation marks, or English transliteration.`;
+
+      let newScript = "";
+      if (textProvider === "nvidia") {
+        const res = await generateNvidiaChatCompletion({
+          model: "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
+          messages: [
+            { role: "system", content: "You are an expert multilingual marketing copywriter specializing in Indian and global languages." },
+            { role: "user", content: remixPrompt },
+          ],
+          temperature: 0.6,
+          maxTokens: 2048,
+        });
+        newScript = (res.content || "").trim();
+      } else {
+        const res = await supabase.functions.invoke("generate-template", {
+          body: {
+            type: "marketing_template",
+            businessType: formData.businessType,
+            productCategory: formData.productCategory,
+            discount: formData.discount[0],
+            occasion: formData.occasion,
+            customPrompt: remixPrompt,
+            textProvider,
+          },
+        });
+        newScript = (res.data?.template || "").trim();
+      }
+
+      if (newScript) {
+        setVideoVoiceoverText(newScript);
+        setGeneratedContent((prev) => ({ ...prev, template: newScript }));
+        toast.success(`Script remixed in ${targetLang.nativeName}! Click 'Preview Voice' or 'Generate Promo Video'.`);
+      }
+    } catch (err: any) {
+      console.error("Language remix error:", err);
+      toast.error(err.message || "Failed to remix script in target language");
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
   const handleGenerate = async () => {
     if (!formData.businessType || !formData.occasion) {
       toast.error("Please select business type and occasion");
       return;
     }
 
+    const isVideo = contentType === "video";
+    const scriptGuidance = isVideo ? getScriptPromptGuidance(voiceoverLanguage, videoDuration) : "";
+    const aspectConfig = VIDEO_ASPECT_RATIOS[videoAspectRatio];
+    const targetWordRule = VIDEO_DURATIONS.find((d) => d.duration === videoDuration) || VIDEO_DURATIONS[1];
+
     setIsGenerating(true);
     try {
       if (textProvider === "nvidia") {
-        toast.info("Generating marketing template with NVIDIA Nemotron Reasoning...");
-        const systemPrompt = `You are an expert Indian marketing copywriter specializing in WhatsApp Business marketing. 
+        toast.info(
+          isVideo
+            ? `Generating ${videoDuration}s video script & frame prompt with NVIDIA Nemotron...`
+            : "Generating marketing template with NVIDIA Nemotron Reasoning..."
+        );
+        const systemPrompt = isVideo
+          ? `You are an expert commercial video director, multilingual copywriter, and voiceover producer.
+You create high-converting promotional video voiceover scripts optimized for social media marketing (Instagram Reels, YouTube Shorts, TikTok, Facebook).
+You strictly follow target timing, word counts, and genuine native language scripts.`
+          : `You are an expert Indian marketing copywriter specializing in WhatsApp Business marketing. 
 You create engaging, festive, and culturally relevant marketing messages optimized for Indian audiences.
 Your messages are concise, use emojis appropriately, and include clear call-to-actions.
 Always maintain a professional yet friendly tone.`;
 
         const hasDiscount = formData.discount[0] > 0;
-        const userPrompt = `Create a WhatsApp marketing message and promotional poster image prompt for:
+        const userPrompt = isVideo
+          ? `Create a promotional marketing video voiceover script and video background frame image prompt for:
+
+Business Type: ${formData.businessType}
+Product Category: ${formData.productCategory || "General products"}
+${hasDiscount ? `Discount: ${formData.discount[0]}% OFF` : "No discount offer - focus on brand awareness and product showcase"}
+Occasion: ${formData.occasion}
+${formData.customPrompt ? `Additional Instructions: ${formData.customPrompt}` : ""}
+
+VIDEO TIMING & LANGUAGE SPECIFICATIONS:
+- Video Duration: ${videoDuration} Seconds
+- Video Aspect Ratio: ${aspectConfig.name} (${aspectConfig.width}x${aspectConfig.height})
+- Script Target Word Count: EXACTLY ${targetWordRule.minWords} to ${targetWordRule.maxWords} words.
+${scriptGuidance}
+
+Please provide:
+1. A video promo voiceover script (TEMPLATE) formatted strictly according to the exact duration, word count, and native script rules.
+2. An AI image prompt (IMAGE_PROMPT) for a cinematic commercial video background frame matching ${aspectConfig.name} (${aspectConfig.width}x${aspectConfig.height}).
+
+Format your response exactly as:
+TEMPLATE:
+[Your video promo voiceover script here]
+
+IMAGE_PROMPT:
+[Your detailed video frame image prompt here]`
+          : `Create a WhatsApp marketing message and promotional poster image prompt for:
 
 Business Type: ${formData.businessType}
 Product Category: ${formData.productCategory || "General products"}
@@ -357,20 +860,32 @@ IMAGE_PROMPT:
           imagePrompt,
           generatedImage: "",
         });
-        toast.success("Template generated with NVIDIA Nemotron!");
+        if (isVideo) {
+          setVideoVoiceoverText(template);
+          setVideoVoiceoverAudio(null);
+          setVideoVoiceoverScript(null);
+          setGeneratedVideoBlob(null);
+          setGeneratedVideoUrl(null);
+        }
+        toast.success(isVideo ? "Video script & frame prompt generated!" : "Template generated with NVIDIA Nemotron!");
         setIsGenerating(false);
         return;
       }
 
       const response = await supabase.functions.invoke("generate-template", {
         body: {
-          type: "marketing_template",
+          type: isVideo ? "video_template" : "marketing_template",
           businessType: formData.businessType,
           productCategory: formData.productCategory,
           discount: formData.discount[0],
           occasion: formData.occasion,
-          customPrompt: formData.customPrompt,
+          customPrompt: isVideo
+            ? `${formData.customPrompt ? `${formData.customPrompt}\n\n` : ""}${scriptGuidance}`
+            : formData.customPrompt,
           textProvider,
+          videoDuration,
+          videoAspectRatio,
+          voiceoverLanguage,
         },
       });
 
@@ -385,7 +900,14 @@ IMAGE_PROMPT:
         imagePrompt: response.data.imagePrompt,
         generatedImage: "",
       });
-      toast.success("Template generated successfully!");
+      if (isVideo) {
+        setVideoVoiceoverText(response.data.template);
+        setVideoVoiceoverAudio(null);
+        setVideoVoiceoverScript(null);
+        setGeneratedVideoBlob(null);
+        setGeneratedVideoUrl(null);
+      }
+      toast.success(isVideo ? "Video template generated successfully!" : "Template generated successfully!");
     } catch (error) {
       console.error("Generation error:", error);
       toast.error("Failed to generate template. Please try again.");
@@ -770,6 +1292,152 @@ IMAGE_PROMPT:
               </Select>
             </div>
 
+            {/* Video Configuration & Multilingual Voice (when Video Template tab selected) */}
+            {contentType === "video" && (
+              <div className="space-y-4 rounded-lg border border-primary/25 bg-muted/20 p-3 shadow-sm">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5 text-xs font-semibold text-primary">
+                    <Film className="h-4 w-4" />
+                    <span>AI Video & Multilingual Settings</span>
+                  </div>
+                  <Badge variant="outline" className="text-[10px]">
+                    Direct MP4
+                  </Badge>
+                </div>
+
+                {/* 1. Video Duration - Strictly 5s, 15s, 30s, 60s (No 90s) */}
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-xs font-medium flex items-center gap-1">
+                      <Clock className="h-3.5 w-3.5 text-primary" /> Video Duration
+                    </Label>
+                    <Badge variant="secondary" className="text-[10px] font-mono">
+                      {VIDEO_DURATIONS.find((d) => d.duration === videoDuration)?.description}
+                    </Badge>
+                  </div>
+                  <div className="grid grid-cols-4 gap-1.5">
+                    {VIDEO_DURATIONS.map((dur) => (
+                      <button
+                        key={dur.duration}
+                        type="button"
+                        onClick={() => setVideoDuration(dur.duration)}
+                        className={`rounded-md border px-2 py-1.5 text-xs font-medium transition-colors ${
+                          videoDuration === dur.duration
+                            ? "border-primary bg-primary text-primary-foreground shadow-sm"
+                            : "border-border bg-card hover:border-primary/50 text-muted-foreground"
+                        }`}
+                      >
+                        {dur.duration}s
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* 2. Video Aspect Ratio - Strictly 16:9, 9:16, 1:1 */}
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-xs font-medium">Aspect Ratio</Label>
+                    <span className="text-[10px] text-muted-foreground">
+                      {VIDEO_ASPECT_RATIOS[videoAspectRatio].name}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-1.5">
+                    {(Object.keys(VIDEO_ASPECT_RATIOS) as VideoAspectRatio[]).map((ratioKey) => {
+                      const cfg = VIDEO_ASPECT_RATIOS[ratioKey];
+                      return (
+                        <button
+                          key={ratioKey}
+                          type="button"
+                          onClick={() => setVideoAspectRatio(ratioKey)}
+                          className={`flex flex-col items-center gap-0.5 rounded-md border p-2 text-xs transition-colors ${
+                            videoAspectRatio === ratioKey
+                              ? "border-primary bg-primary/10 text-primary font-semibold"
+                              : "border-border bg-card text-muted-foreground hover:border-primary/50"
+                          }`}
+                        >
+                          <span className="font-mono text-xs">{cfg.id}</span>
+                          <span className="text-[10px] opacity-75">{cfg.width}×{cfg.height}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* 3. Multilingual Voice Support */}
+                <div className="space-y-2 border-t border-border/60 pt-3">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-xs font-medium flex items-center gap-1">
+                      <Globe className="h-3.5 w-3.5 text-primary" /> Voiceover Language
+                    </Label>
+                    {isRtlLanguage(voiceoverLanguage) && (
+                      <Badge variant="outline" className="text-[10px] text-amber-600 dark:text-amber-400">
+                        RTL Text Direction
+                      </Badge>
+                    )}
+                  </div>
+                  <Select value={voiceoverLanguage} onValueChange={handleLanguageChange}>
+                    <SelectTrigger className="h-8 text-xs bg-background">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {SUPPORTED_LANGUAGES.map((lang) => (
+                        <SelectItem key={lang.id} value={lang.id} className="text-xs">
+                          {lang.flagEmoji} {lang.label} ({lang.nativeName})
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+
+                  {/* Voice Gender & Accent Selection */}
+                  <div className="grid grid-cols-2 gap-2 pt-1">
+                    <div className="space-y-1">
+                      <Label className="text-[10px] text-muted-foreground">Voice Gender</Label>
+                      <div className="grid grid-cols-2 gap-1">
+                        <button
+                          type="button"
+                          onClick={() => handleGenderChange("female")}
+                          className={`rounded border py-1 text-xs font-medium ${
+                            voiceGender === "female"
+                              ? "border-primary bg-primary/15 text-primary"
+                              : "border-border text-muted-foreground"
+                          }`}
+                        >
+                          Female
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleGenderChange("male")}
+                          className={`rounded border py-1 text-xs font-medium ${
+                            voiceGender === "male"
+                              ? "border-primary bg-primary/15 text-primary"
+                              : "border-border text-muted-foreground"
+                          }`}
+                        >
+                          Male
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="space-y-1">
+                      <Label className="text-[10px] text-muted-foreground">Voice Persona</Label>
+                      <Select value={selectedVoiceId} onValueChange={setSelectedVoiceId}>
+                        <SelectTrigger className="h-7 text-xs bg-background">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {getVoicesForLanguage(voiceoverLanguage, voiceGender).map((v) => (
+                            <SelectItem key={v.id} value={v.id} className="text-xs">
+                              {v.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
             <div className="space-y-2">
               <Label htmlFor="custom-prompt">Custom Instructions (Optional)</Label>
               <Textarea
@@ -797,7 +1465,7 @@ IMAGE_PROMPT:
               ) : (
                 <>
                   <Sparkles className="mr-2 h-4 w-4" />
-                  Generate Template
+                  {contentType === "video" ? "Generate Video Script & Frame" : "Generate Template"}
                 </>
               )}
             </Button>
@@ -808,13 +1476,72 @@ IMAGE_PROMPT:
         <div className="space-y-6">
           <Card>
             <CardHeader>
-              <div className="flex items-center justify-between">
-                <CardTitle className="flex items-center gap-2">
-                  <MessageSquare className="h-5 w-5" />
-                  WhatsApp Message Template
-                </CardTitle>
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <div className="space-y-0.5">
+                  <CardTitle className="flex items-center gap-2">
+                    {contentType === "video" ? (
+                      <>
+                        <Film className="h-5 w-5 text-primary" />
+                        <span>Video Promo Script ({SUPPORTED_LANGUAGES.find((l) => l.id === voiceoverLanguage)?.nativeName || voiceoverLanguage})</span>
+                      </>
+                    ) : (
+                      <>
+                        <MessageSquare className="h-5 w-5" />
+                        <span>WhatsApp Message Template</span>
+                      </>
+                    )}
+                  </CardTitle>
+                  {contentType === "video" && (
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                      <span className="font-mono">
+                        {(videoVoiceoverText || generatedContent.template || "").trim().split(/\s+/).filter(Boolean).length} words
+                      </span>
+                      <span>•</span>
+                      <span className="text-primary font-medium">
+                        Target: {VIDEO_DURATIONS.find((d) => d.duration === videoDuration)?.minWords}–{VIDEO_DURATIONS.find((d) => d.duration === videoDuration)?.maxWords} words ({videoDuration}s)
+                      </span>
+                      {isRtlLanguage(voiceoverLanguage) && (
+                        <Badge variant="outline" className="text-[10px]">RTL</Badge>
+                      )}
+                    </div>
+                  )}
+                </div>
                 {generatedContent.template && (
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    {contentType === "video" && (
+                      <>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-8 px-2 text-xs gap-1"
+                          onClick={handlePreviewVoiceover}
+                          disabled={isPreviewingVoice || !generatedContent.template.trim()}
+                          title="Preview voiceover audio"
+                        >
+                          {isPreviewingVoice ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <Volume2 className="h-3.5 w-3.5 text-primary" />
+                          )}
+                          <span>Preview</span>
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-8 px-2 text-xs gap-1 border-primary/40 text-primary hover:bg-primary/10"
+                          onClick={handleDownloadVoice}
+                          disabled={isDownloadingVoice || !generatedContent.template.trim()}
+                          title="Download voiceover (.mp3)"
+                        >
+                          {isDownloadingVoice ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <Download className="h-3.5 w-3.5" />
+                          )}
+                          <span>Voice .mp3</span>
+                        </Button>
+                      </>
+                    )}
                     <Button
                       variant="outline"
                       size="sm"
@@ -837,34 +1564,102 @@ IMAGE_PROMPT:
                 )}
               </div>
             </CardHeader>
-            <CardContent>
+            <CardContent className="space-y-3">
               {generatedContent.template ? (
-                <Textarea
-                  value={generatedContent.template}
-                  onChange={(e) =>
-                    setGeneratedContent({
-                      ...generatedContent,
-                      template: e.target.value,
-                    })
-                  }
-                  rows={8}
-                  className="font-mono text-sm"
-                />
+                <>
+                  <Textarea
+                    value={contentType === "video" ? (videoVoiceoverText || generatedContent.template) : generatedContent.template}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setGeneratedContent({ ...generatedContent, template: val });
+                      if (contentType === "video") {
+                        setVideoVoiceoverText(val);
+                        setVideoVoiceoverAudio(null);
+                      }
+                    }}
+                    dir={contentType === "video" && isRtlLanguage(voiceoverLanguage) ? "rtl" : "ltr"}
+                    rows={contentType === "video" ? 6 : 8}
+                    className={`font-mono text-sm ${contentType === "video" && isRtlLanguage(voiceoverLanguage) ? "text-right font-sans text-base" : ""}`}
+                  />
+                  {contentType === "video" && (
+                    <div className="flex items-center justify-between gap-2 rounded-md bg-muted/30 p-2 text-xs border border-border/60 flex-wrap">
+                      <div className="flex items-center gap-1.5">
+                        <Globe className="h-3.5 w-3.5 text-primary" />
+                        <span className="font-medium text-[11px]">Remix Language:</span>
+                      </div>
+                      <div className="flex items-center gap-1 flex-wrap">
+                        {SUPPORTED_LANGUAGES.map((lang) => (
+                          <button
+                            key={lang.id}
+                            type="button"
+                            onClick={() => handleVideoLanguageRemix(lang.id)}
+                            className={`rounded px-1.5 py-0.5 text-[10px] font-medium transition-colors border ${
+                              voiceoverLanguage === lang.id
+                                ? "border-primary bg-primary text-primary-foreground font-semibold"
+                                : "border-border bg-card text-muted-foreground hover:border-primary/50"
+                            }`}
+                          >
+                            {lang.nativeName}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {contentType === "video" && videoVoiceoverAudio && (
+                    <div className="flex items-center justify-between gap-2 rounded-md bg-emerald-500/10 border border-emerald-500/25 px-2.5 py-1.5 text-xs text-emerald-800 dark:text-emerald-300">
+                      <div className="flex items-center gap-1.5">
+                        <Volume2 className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
+                        <span className="font-medium text-[11px]">
+                          Voice audio ready ({SUPPORTED_LANGUAGES.find((l) => l.id === voiceoverLanguage)?.nativeName})
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-6 px-2 text-[10px]"
+                          onClick={() => {
+                            try {
+                              if (voicePreviewAudioRef.current) voicePreviewAudioRef.current.pause();
+                              const audio = new Audio(`data:audio/mpeg;base64,${videoVoiceoverAudio}`);
+                              voicePreviewAudioRef.current = audio;
+                              audio.play();
+                            } catch (e) {
+                              console.error(e);
+                            }
+                          }}
+                        >
+                          Play
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-6 px-2 text-[10px]"
+                          onClick={handleDownloadVoice}
+                        >
+                          Save .mp3
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                </>
               ) : (
-                <div className="flex h-40 items-center justify-center rounded-lg border-2 border-dashed text-muted-foreground">
-                  Generated template will appear here
+                <div className="flex h-40 items-center justify-center rounded-lg border-2 border-dashed text-muted-foreground text-xs">
+                  {contentType === "video" ? "Generated video script will appear here" : "Generated template will appear here"}
                 </div>
               )}
             </CardContent>
           </Card>
 
           {/* Image Provider Selector */}
-          {contentType === "poster" && (
+          {(contentType === "poster" || contentType === "video") && (
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2 text-base">
                   <ImagePlus className="h-5 w-5" />
-                  Image Generation Provider
+                  {contentType === "video" ? "Video Background Frame Provider" : "Image Generation Provider"}
                 </CardTitle>
               </CardHeader>
               <CardContent>
@@ -1004,7 +1799,9 @@ IMAGE_PROMPT:
               <div className="flex items-center justify-between">
                 <CardTitle className="flex items-center gap-2">
                   <Image className="h-5 w-5" />
-                  Poster Image Prompt
+                  {contentType === "video"
+                    ? `Video Background Frame Prompt (${VIDEO_ASPECT_RATIOS[videoAspectRatio].id})`
+                    : "Poster Image Prompt"}
                 </CardTitle>
                 <div className="flex gap-2">
                   {generatedContent.imagePrompt && (
@@ -1036,7 +1833,7 @@ IMAGE_PROMPT:
                         ) : (
                           <ImagePlus className="h-4 w-4" />
                         )}
-                        <span className="ml-1">Generate Image</span>
+                        <span className="ml-1">{contentType === "video" ? "Generate Frame" : "Generate Image"}</span>
                       </Button>
                     </>
                   )}
@@ -1179,13 +1976,24 @@ IMAGE_PROMPT:
               )}
               
               {generatedContent.generatedImage && !isGeneratingImage && (
-                <div className="space-y-2">
-                  <p className="text-sm font-medium">Generated Poster</p>
-                  <div className="relative rounded-lg overflow-hidden border">
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm font-medium">
+                      {contentType === "video"
+                        ? `Video Background Frame (${VIDEO_ASPECT_RATIOS[videoAspectRatio].id})`
+                        : "Generated Poster"}
+                    </p>
+                    {contentType === "video" && (
+                      <Badge variant="outline" className="text-xs">
+                        {VIDEO_ASPECT_RATIOS[videoAspectRatio].width} × {VIDEO_ASPECT_RATIOS[videoAspectRatio].height}
+                      </Badge>
+                    )}
+                  </div>
+                  <div className="relative rounded-lg overflow-hidden border bg-black/5 max-h-[360px] flex items-center justify-center">
                     <img 
                       src={generatedContent.generatedImage} 
-                      alt="Generated promotional poster"
-                      className="w-full h-auto"
+                      alt={contentType === "video" ? "Video background frame" : "Generated promotional poster"}
+                      className="max-h-[360px] w-auto object-contain mx-auto"
                     />
                   </div>
                   <div className="flex flex-col sm:flex-row gap-2">
@@ -1196,21 +2004,123 @@ IMAGE_PROMPT:
                       onClick={() => {
                         const link = document.createElement('a');
                         link.href = generatedContent.generatedImage;
-                        link.download = `poster-${formData.occasion || 'promo'}.png`;
+                        link.download = `${contentType === "video" ? "video-frame" : "poster"}-${formData.occasion || 'promo'}.png`;
                         link.click();
                       }}
                     >
-                      Download Image
+                      <Download className="mr-1.5 h-3.5 w-3.5" />
+                      Download Frame
                     </Button>
-                    <Button
-                      size="sm"
-                      className="flex-1 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white font-medium shadow-sm"
-                      onClick={() => setSocialPostOpen(true)}
-                    >
-                      <Share2 className="mr-1.5 h-3.5 w-3.5" />
-                      Post to Social Media
-                    </Button>
+                    {contentType === "poster" && (
+                      <Button
+                        size="sm"
+                        className="flex-1 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white font-medium shadow-sm"
+                        onClick={() => setSocialPostOpen(true)}
+                      >
+                        <Share2 className="mr-1.5 h-3.5 w-3.5" />
+                        Post to Social Media
+                      </Button>
+                    )}
                   </div>
+
+                  {/* Video Render Action Card */}
+                  {contentType === "video" && (
+                    <div className="rounded-lg border border-primary/30 bg-primary/5 p-3 space-y-3 mt-2">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-1.5">
+                          <Film className="h-4 w-4 text-primary" />
+                          <span className="text-xs font-semibold">
+                            Render Promo Video ({videoDuration}s • {VIDEO_ASPECT_RATIOS[videoAspectRatio].id})
+                          </span>
+                        </div>
+                        {isRtlLanguage(voiceoverLanguage) && (
+                          <Badge variant="outline" className="text-[10px] text-amber-600 dark:text-amber-400">
+                            RTL Subtitles
+                          </Badge>
+                        )}
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={handleGeneratePromoVideo}
+                          disabled={isGeneratingVideo || !generatedContent.generatedImage}
+                          className="w-full text-xs font-medium"
+                        >
+                          {isGeneratingVideo ? (
+                            <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <Film className="mr-1.5 h-3.5 w-3.5 text-primary" />
+                          )}
+                          Promo Video
+                        </Button>
+                        <Button
+                          size="sm"
+                          onClick={handleGenerateAIVideoWithAudio}
+                          disabled={isGeneratingVideo || !generatedContent.generatedImage}
+                          className="w-full text-xs bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 text-white shadow-sm font-medium"
+                        >
+                          {isGeneratingVideo ? (
+                            <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <Sparkles className="mr-1.5 h-3.5 w-3.5" />
+                          )}
+                          AI Video + Audio
+                        </Button>
+                      </div>
+
+                      {/* Generated MP4 Video Player */}
+                      {generatedVideoUrl && (
+                        <div className="space-y-2 pt-2 border-t border-border/60">
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-semibold text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+                              <CheckCircle className="h-3.5 w-3.5" />
+                              MP4 Ready ({videoDuration}s • {VIDEO_ASPECT_RATIOS[videoAspectRatio].width}×{VIDEO_ASPECT_RATIOS[videoAspectRatio].height})
+                            </span>
+                            <span className="text-[10px] text-muted-foreground font-mono">
+                              {generatedVideoBlob ? `${Math.round(generatedVideoBlob.size / 1024)} KB` : ""}
+                            </span>
+                          </div>
+                          <div className="relative rounded-lg overflow-hidden border bg-black flex items-center justify-center">
+                            <video
+                              src={generatedVideoUrl}
+                              controls
+                              autoPlay
+                              loop
+                              className="max-h-[300px] w-full object-contain"
+                            />
+                          </div>
+                          <div className="flex flex-col sm:flex-row gap-2">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="flex-1 text-xs gap-1"
+                              onClick={() => {
+                                const link = document.createElement("a");
+                                link.href = generatedVideoUrl;
+                                link.download = `promo_${voiceoverLanguage}_${videoDuration}s_${Date.now()}.mp4`;
+                                document.body.appendChild(link);
+                                link.click();
+                                document.body.removeChild(link);
+                              }}
+                            >
+                              <Download className="h-3.5 w-3.5" />
+                              Download MP4
+                            </Button>
+                            <Button
+                              size="sm"
+                              className="flex-1 text-xs bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white font-medium"
+                              onClick={() => setSocialPostOpen(true)}
+                            >
+                              <Share2 className="h-3.5 w-3.5 mr-1" />
+                              Post to Social Media
+                            </Button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
             </CardContent>
@@ -1302,6 +2212,64 @@ IMAGE_PROMPT:
         initialImageUrl={generatedContent.generatedImage}
         templateName={templateName || formData.occasion || "Marketing Template"}
       />
+
+      {/* Video Preview Dialog */}
+      <Dialog open={isVideoPreviewOpen} onOpenChange={setIsVideoPreviewOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Film className="h-5 w-5 text-primary" />
+              <span>Promo Video Preview ({videoDuration}s • {VIDEO_ASPECT_RATIOS[videoAspectRatio].id})</span>
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            {generatedVideoUrl && (
+              <div className="relative rounded-lg overflow-hidden border bg-black flex items-center justify-center">
+                <video
+                  src={generatedVideoUrl}
+                  controls
+                  autoPlay
+                  loop
+                  className="max-h-[380px] w-full object-contain"
+                />
+              </div>
+            )}
+            <div className="flex items-center justify-between text-xs text-muted-foreground">
+              <span>Language: {SUPPORTED_LANGUAGES.find((l) => l.id === voiceoverLanguage)?.nativeName || voiceoverLanguage}</span>
+              <span>Dimensions: {VIDEO_ASPECT_RATIOS[videoAspectRatio].width} × {VIDEO_ASPECT_RATIOS[videoAspectRatio].height}</span>
+            </div>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                className="flex-1 text-xs"
+                onClick={() => {
+                  if (generatedVideoUrl) {
+                    const link = document.createElement("a");
+                    link.href = generatedVideoUrl;
+                    link.download = `promo_${voiceoverLanguage}_${videoDuration}s_${Date.now()}.mp4`;
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
+                  }
+                }}
+              >
+                <Download className="mr-1.5 h-3.5 w-3.5" />
+                Download MP4
+              </Button>
+              <Button
+                className="flex-1 text-xs bg-gradient-to-r from-blue-600 to-indigo-600 text-white"
+                onClick={() => {
+                  setIsVideoPreviewOpen(false);
+                  setSocialPostOpen(true);
+                }}
+              >
+                <Share2 className="mr-1.5 h-3.5 w-3.5" />
+                Post to Social Media
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
