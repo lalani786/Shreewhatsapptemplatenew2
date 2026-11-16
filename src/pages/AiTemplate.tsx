@@ -93,7 +93,16 @@ import {
 } from "@/lib/pollinationsImage";
 
 type ContentType = "poster" | "prompt_only" | "video";
-type ImageProvider = "auto" | "lovable_ai" | "pollinations" | "stability" | "leonardo" | "nvidia" | "cosmos";
+type ImageProvider =
+  | "auto"
+  | "lovable_ai"
+  | "pollinations"
+  | "stability"
+  | "leonardo"
+  | "nvidia"
+  | "cosmos"
+  | "pexels"
+  | "runway";
 
 interface ImageProviderOption {
   id: ImageProvider;
@@ -103,7 +112,9 @@ interface ImageProviderOption {
 }
 
 const imageProviders: ImageProviderOption[] = [
-  { id: "auto", label: "Automatic (Fallback)", keyName: "", description: "Tries NVIDIA → Cosmos → Pollinations → Shree AI" },
+  { id: "auto", label: "Automatic (Fallback)", keyName: "", description: "Tries Runway → NVIDIA → Cosmos → Pollinations → Shree AI" },
+  { id: "runway", label: "Runway Gen-3 (AI Video)", keyName: "runway_api_key", description: "Real AI Image-to-Video & 360° motion" },
+  { id: "pexels", label: "Pexels Stock Video", keyName: "pexels_api_key", description: "Commercial HD/4K Video Clips" },
   { id: "pollinations", label: "Pollinations.ai", keyName: "pollinations_api_key", description: "High-quality image catalog (Flux/Turbo)" },
   { id: "nvidia", label: "NVIDIA AI (Free)", keyName: "nvidia_api_key", description: "Free NIM image generation" },
   { id: "stability", label: "Stability AI", keyName: "stability_api_key", description: "SDXL / SD3 commercial images" },
@@ -234,6 +245,7 @@ export default function AiTemplate() {
   const [videoVoiceoverAudio, setVideoVoiceoverAudio] = useState<string | null>(null);
   const [videoVoiceoverScript, setVideoVoiceoverScript] = useState<string | null>(null);
   const [userElevenLabsKey, setUserElevenLabsKey] = useState<string>("");
+  const [userRunwayKey, setUserRunwayKey] = useState<string>("");
   const [isPreviewingVoice, setIsPreviewingVoice] = useState(false);
   const [isDownloadingVoice, setIsDownloadingVoice] = useState(false);
   const [isGeneratingVideo, setIsGeneratingVideo] = useState(false);
@@ -293,12 +305,15 @@ export default function AiTemplate() {
     if (!user) return;
     const { data } = await supabase
       .from("api_credentials")
-      .select("stability_api_key, leonardo_api_key, gemini_api_key, nvidia_api_key, elevenlabs_api_key")
+      .select("stability_api_key, leonardo_api_key, gemini_api_key, nvidia_api_key, elevenlabs_api_key, runway_api_key, pexels_api_key")
       .eq("user_id", user.id)
       .maybeSingle();
     if (data) {
       if (data.elevenlabs_api_key) {
         setUserElevenLabsKey(data.elevenlabs_api_key);
+      }
+      if ((data as any).runway_api_key) {
+        setUserRunwayKey((data as any).runway_api_key);
       }
       setAvailableKeys(prev => ({
         ...prev,
@@ -307,6 +322,8 @@ export default function AiTemplate() {
         gemini_api_key: !!data.gemini_api_key,
         nvidia_api_key: !!data.nvidia_api_key,
         elevenlabs_api_key: !!data.elevenlabs_api_key,
+        runway_api_key: !!(data as any).runway_api_key,
+        pexels_api_key: !!(data as any).pexels_api_key,
         pollinations_api_key: prev.pollinations_api_key || !!localStorage.getItem("pollinations_api_key"),
       }));
       setTextProvider("gemini");
@@ -511,6 +528,215 @@ export default function AiTemplate() {
     }
   };
 
+  const getStoredRunwayKey = async (): Promise<string> => {
+    if (userRunwayKey && userRunwayKey.trim()) return userRunwayKey.trim();
+    const local = localStorage.getItem("runway_api_key");
+    if (local && local.trim()) return local.trim();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (user) {
+      const { data } = await supabase
+        .from("api_credentials")
+        .select("runway_api_key")
+        .eq("user_id", user.id)
+        .maybeSingle();
+      const key = (data as any)?.runway_api_key;
+      if (key && typeof key === "string" && key.trim()) {
+        setUserRunwayKey(key.trim());
+        return key.trim();
+      }
+    }
+    return "";
+  };
+
+  const toAccessibleImageUrl = async (url: string): Promise<string> => {
+    if (!url) return "";
+    if (url.startsWith("data:") || url.startsWith("https://") || url.startsWith("http://")) {
+      return url;
+    }
+    if (url.startsWith("blob:")) {
+      try {
+        const res = await fetch(url);
+        const blob = await res.blob();
+        return await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(reader.result as string);
+          reader.onerror = reject;
+          reader.readAsDataURL(blob);
+        });
+      } catch (e) {
+        console.warn("Failed to convert blob URL to data URI:", e);
+        return url;
+      }
+    }
+    return url;
+  };
+
+  const buildDynamicMotionPrompt = (customUserPrompt?: string): string => {
+    const parts: string[] = [];
+    const subject = (formData.productCategory || formData.businessType || "premium footwear product").trim();
+    const occasion = (formData.occasion || "commercial showcase").trim();
+
+    parts.push(`Cinematic commercial advertisement video showcasing ${subject} for ${occasion}.`);
+
+    const details = customUserPrompt || generatedContent.imagePrompt || "";
+    if (details.trim()) {
+      parts.push(`Product identity & design details: ${details.trim()}.`);
+    }
+
+    // Dynamic motion instructions ensuring actual visual motion (rotation, dolly, orbit, lighting):
+    parts.push(
+      "Visual Motion & Camera: Smooth 360-degree continuous product rotation displaying outsole tread, midsole, side profile, and footwear upper construction.",
+      "Cinematic slow zoom-in with smooth dolly tracking and orbital camera pan around the product.",
+      "Animated dynamic studio lighting with moving specular reflections, soft realistic shadows shifting across the ground plane.",
+      "Gentle atmospheric floating dust particles with subtle depth of field transitions.",
+      "Strictly preserve exact product identity, footwear silhouette, colors, materials, branding, and logo without distortion or morphing.",
+      "Fluid continuous multi-frame video motion, high framerate commercial quality, ultra-sharp 4K commercial advertisement grade."
+    );
+
+    if (formData.customPrompt?.trim()) {
+      parts.push(`Creative directives: ${formData.customPrompt.trim()}`);
+    }
+
+    return parts.join(" ");
+  };
+
+  const generateRealAnimatedVideo = async (options: {
+    imageUrl?: string;
+    promptText?: string;
+    durationSeconds: VideoDuration;
+    aspectRatio: VideoAspectRatio;
+  }): Promise<Blob> => {
+    const { imageUrl, promptText = "", durationSeconds, aspectRatio } = options;
+
+    const runwayKey = await getStoredRunwayKey();
+    const isRunwaySelected = imageProvider === "runway";
+    const isPexelsSelected = imageProvider === "pexels";
+    const isAuto = imageProvider === "auto";
+
+    // 1. Runway Gen-3 Alpha Image-to-Video / Text-to-Video
+    if (isRunwaySelected || (isAuto && runwayKey) || (runwayKey && !isPexelsSelected)) {
+      if (!runwayKey) {
+        throw new Error(
+          "Runway API key not configured. Add your RUNWAY_API_KEY in API Setup to generate authentic animated MP4 videos with 360° motion."
+        );
+      }
+
+      toast.info("Generating authentic animated AI video with Runway Gen-3 (Direct MP4)...");
+
+      let accessibleImage = "";
+      if (imageUrl) {
+        toast.info("Preparing product frame for Runway Image-to-Video...");
+        accessibleImage = await toAccessibleImageUrl(imageUrl);
+      }
+
+      const motionPrompt = buildDynamicMotionPrompt(promptText);
+
+      // Runway Gen-3 Alpha Turbo supported ratios: "1280:768" (16:9 / 1:1) and "768:1280" (9:16)
+      const runwayRatio = aspectRatio === "9:16" ? "768:1280" : "1280:768";
+      // Runway Gen-3 turbo supports 5 or 10 seconds per task
+      const runwayDuration = durationSeconds >= 10 ? 10 : 5;
+
+      toast.info("Submitting Image-to-Video task with 360° rotation directives...");
+      const requestBody: Record<string, any> = {
+        promptText: motionPrompt,
+        model: "gen3a_turbo",
+        duration: runwayDuration,
+        ratio: runwayRatio,
+      };
+
+      if (accessibleImage) {
+        requestBody.promptImage = accessibleImage;
+      }
+
+      const res = await fetch("https://api.dev.runwayml.com/v1/image_to_video", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${runwayKey}`,
+          "Content-Type": "application/json",
+          "X-Runway-Version": "2024-09-13",
+        },
+        body: JSON.stringify(requestBody),
+      });
+
+      if (!res.ok) {
+        const errText = await res.text();
+        throw new Error(`Runway API error (${res.status}): ${errText.slice(0, 180)}`);
+      }
+
+      const taskData = await res.json();
+      const taskId = taskData.id;
+      if (!taskId) throw new Error("Runway did not return a valid task ID.");
+
+      toast.info("Runway AI video generation in progress. Animating frames...");
+      let videoUrl = "";
+      for (let i = 0; i < 40; i++) {
+        await new Promise((r) => setTimeout(r, 3000));
+        const checkRes = await fetch(`https://api.dev.runwayml.com/v1/tasks/${taskId}`, {
+          headers: {
+            Authorization: `Bearer ${runwayKey}`,
+            "X-Runway-Version": "2024-09-13",
+          },
+        });
+        if (!checkRes.ok) {
+          const errText = await checkRes.text();
+          throw new Error(`Runway polling error (${checkRes.status}): ${errText.slice(0, 150)}`);
+        }
+        const checkData = await checkRes.json();
+        if (checkData.status === "SUCCEEDED" && checkData.output?.[0]) {
+          videoUrl = checkData.output[0];
+          break;
+        }
+        if (checkData.status === "FAILED") {
+          throw new Error(
+            `Runway video generation failed: ${checkData.failure || checkData.failureCode || "Generation failed"}`
+          );
+        }
+        if (checkData.progress) {
+          toast.info(`Runway AI video animating... ${Math.round(checkData.progress * 100)}%`);
+        }
+      }
+
+      if (!videoUrl) throw new Error("Runway video generation timed out. Please try again.");
+
+      toast.info("Downloading generated animated MP4 video...");
+      const dlRes = await fetch(videoUrl);
+      if (!dlRes.ok) throw new Error("Could not download generated Runway video");
+      const videoBlob = await dlRes.blob();
+      await assertMp4Video(videoBlob, "Runway Gen-3");
+      return videoBlob;
+    }
+
+    // 2. Pexels Commercial Stock Video
+    if (isPexelsSelected || (isAuto && availableKeys["pexels_api_key"])) {
+      toast.info("Searching commercial stock video footage on Pexels (Direct MP4)...");
+      const searchQuery = `${formData.productCategory || formData.businessType || "footwear"} commercial cinematic advertisement`;
+      const { data: px, error: pxErr } = await supabase.functions.invoke("pexels-search", {
+        body: { query: searchQuery.trim(), kind: "video" },
+      });
+      if (pxErr) throw pxErr;
+      if (px?.error) throw new Error(px.error);
+      if (!px?.videoUrl) throw new Error("No matching commercial video found on Pexels.");
+
+      const res = await fetch(px.videoUrl);
+      if (!res.ok) throw new Error("Could not download the Pexels video");
+      const videoBlob = await res.blob();
+      if (videoBlob.size > 50 * 1024 * 1024) {
+        throw new Error("Pexels video is over 50 MB. Try a different query.");
+      }
+      await assertMp4Video(videoBlob, "Pexels");
+      if (px.credit) toast.info(`Video by ${px.credit} on Pexels`);
+      return videoBlob;
+    }
+
+    // 3. Fallback when neither Runway nor Pexels is configured
+    // Requirement 7 & 9:
+    // If provider returns only a static image, do not silently label it as a successfully generated animated video.
+    // Do not use a static image slideshow or CSS zoom effect as a replacement for real AI video generation.
+    throw new Error(
+      `Selected provider "${imageProvider}" only generates static images. True AI animated video requires Runway Gen-3 or Pexels. Please add your RUNWAY_API_KEY in API Setup (or select Pexels) to generate authentic moving MP4 videos with 360° rotation and camera animations.`
+    );
+  };
+
   const handleGeneratePromoVideo = async () => {
     if (!generatedContent.generatedImage) {
       toast.error("Please generate or select a video frame image first");
@@ -523,11 +749,20 @@ export default function AiTemplate() {
       const isRTL = isRtlLanguage(voiceoverLanguage);
       const scriptToOverlay = (videoVoiceoverText || generatedContent.template || "").trim();
 
+      // Step 1: Generate real animated video frames (genuine visual motion with rotation & camera moves)
+      const animatedVideoBlob = await generateRealAnimatedVideo({
+        imageUrl: generatedContent.generatedImage,
+        promptText: generatedContent.imagePrompt || formData.customPrompt,
+        durationSeconds: videoDuration,
+        aspectRatio: videoAspectRatio,
+      });
+
+      // Step 2: Overlay audio and text over the real animated video frames
       let videoBlob: Blob;
       if (videoVoiceoverAudio) {
-        toast.info(`Creating ${videoDuration}s ${videoAspectRatio} promo video with synchronized voiceover...`);
+        toast.info(`Compositing ${videoDuration}s ${videoAspectRatio} promo video with synchronized voiceover...`);
         videoBlob = await createPromoVideoWithAudio({
-          imageUrl: generatedContent.generatedImage,
+          videoBlob: animatedVideoBlob,
           text: scriptToOverlay,
           voiceAudioBase64: videoVoiceoverAudio,
           width,
@@ -538,9 +773,9 @@ export default function AiTemplate() {
           isRTL,
         });
       } else {
-        toast.info(`Creating ${videoDuration}s ${videoAspectRatio} animated promo video...`);
+        toast.info(`Rendering ${videoDuration}s ${videoAspectRatio} animated promo video with text overlays...`);
         videoBlob = await createPromoVideo({
-          imageUrl: generatedContent.generatedImage,
+          videoBlob: animatedVideoBlob,
           text: scriptToOverlay,
           durationMs,
           width,
@@ -554,7 +789,7 @@ export default function AiTemplate() {
       const url = URL.createObjectURL(videoBlob);
       setGeneratedVideoUrl(url);
       setIsVideoPreviewOpen(true);
-      toast.success(`Promo video (${videoDuration}s, ${width}×${height} MP4) generated successfully!`);
+      toast.success(`Promo video (${videoDuration}s, ${width}×${height} MP4) generated with real animated motion!`);
     } catch (err: any) {
       console.error("Promo video generation error:", err);
       toast.error(err.message || "Failed to generate promo video");
@@ -568,7 +803,7 @@ export default function AiTemplate() {
     try {
       let imageUrl = generatedContent.generatedImage;
       if (!imageUrl) {
-        toast.info("Generating video background frame first...");
+        toast.info("Generating initial product frame first...");
         const { width: reqW, height: reqH } = getVideoDimensions(videoAspectRatio, "720p");
         if (imageProvider === "pollinations" || imageProvider === "auto") {
           const res = await generatePollinationsImage({
@@ -589,7 +824,7 @@ export default function AiTemplate() {
             height: reqH,
           });
           imageUrl = res.imageUrl;
-        } else {
+        } else if (imageProvider !== "runway" && imageProvider !== "pexels") {
           const res = await supabase.functions.invoke("generate-template", {
             body: {
               type: "generate_image",
@@ -603,8 +838,6 @@ export default function AiTemplate() {
           setGeneratedContent((prev) => ({ ...prev, generatedImage: imageUrl }));
         }
       }
-
-      if (!imageUrl) throw new Error("Could not produce frame for video");
 
       let audioBase64 = videoVoiceoverAudio;
       const scriptText = (videoVoiceoverText || generatedContent.template || "").trim();
@@ -638,15 +871,23 @@ export default function AiTemplate() {
         }
       }
 
+      // Step 1: Generate real animated video frames (Runway Gen-3 Image-to-Video with 360° motion or Pexels)
+      const animatedVideoBlob = await generateRealAnimatedVideo({
+        imageUrl,
+        promptText: generatedContent.imagePrompt || formData.customPrompt,
+        durationSeconds: videoDuration,
+        aspectRatio: videoAspectRatio,
+      });
+
       const { width, height } = getVideoDimensions(videoAspectRatio, videoQuality);
       const durationMs = videoDuration * 1000;
       const isRTL = isRtlLanguage(voiceoverLanguage);
 
-      toast.info(`Mixing and rendering ${videoDuration}s ${videoAspectRatio} promo video...`);
+      toast.info(`Mixing and rendering ${videoDuration}s ${videoAspectRatio} animated video with voiceover...`);
       let videoBlob: Blob;
       if (audioBase64) {
         videoBlob = await createPromoVideoWithAudio({
-          imageUrl,
+          videoBlob: animatedVideoBlob,
           text: scriptText,
           voiceAudioBase64: audioBase64,
           width,
@@ -658,7 +899,7 @@ export default function AiTemplate() {
         });
       } else {
         videoBlob = await createPromoVideo({
-          imageUrl,
+          videoBlob: animatedVideoBlob,
           text: scriptText,
           durationMs,
           width,
@@ -672,7 +913,7 @@ export default function AiTemplate() {
       const url = URL.createObjectURL(videoBlob);
       setGeneratedVideoUrl(url);
       setIsVideoPreviewOpen(true);
-      toast.success(`Video with audio (${videoDuration}s, ${width}×${height} MP4) ready!`);
+      toast.success(`Video with audio (${videoDuration}s, ${width}×${height} MP4) ready with real animated motion!`);
     } catch (err: any) {
       console.error("AI Video with Audio error:", err);
       toast.error(err.message || "Failed to generate video with audio");
@@ -1100,6 +1341,29 @@ IMAGE_PROMPT:
         setIsGeneratingImage(false);
         return;
       }
+    }
+  }
+
+  if (imageProvider === "pexels") {
+    try {
+      toast.info("Finding high-resolution commercial stock photo on Pexels...");
+      const pexelsRes = await supabase.functions.invoke("pexels-search", {
+        body: { query: currentPrompt.trim(), kind: "photo" },
+      });
+      if (pexelsRes.error) throw pexelsRes.error;
+      if (pexelsRes.data?.imageUrl) {
+        setGeneratedContent(prev => ({
+          ...prev,
+          generatedImage: pexelsRes.data.imageUrl,
+        }));
+        toast.success("Stock photo found on Pexels!");
+        setIsGeneratingImage(false);
+        return;
+      }
+    } catch (err: any) {
+      toast.error(`Pexels photo search failed: ${err.message || "Unknown error"}`);
+      setIsGeneratingImage(false);
+      return;
     }
   }
 

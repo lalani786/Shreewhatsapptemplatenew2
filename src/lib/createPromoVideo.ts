@@ -8,7 +8,9 @@
 import { convertWebmToMp4 } from "./videoConverter";
 
 interface PromoVideoOptions {
-  imageUrl: string;
+  imageUrl?: string;
+  videoUrl?: string;
+  videoBlob?: Blob;
   text?: string;
   durationMs?: number;
   width?: number;
@@ -20,6 +22,8 @@ interface PromoVideoOptions {
 
 export async function createPromoVideo({
   imageUrl,
+  videoUrl,
+  videoBlob,
   text = "",
   durationMs = 15000,
   width = 1080,
@@ -27,8 +31,19 @@ export async function createPromoVideo({
   zoomIntensity = 1,
   isRTL,
 }: PromoVideoOptions): Promise<Blob> {
-  // Load image
-  const img = await loadImage(imageUrl);
+  let mediaSource: HTMLVideoElement | HTMLImageElement;
+  let tempBlobUrl: string | null = null;
+
+  if (videoBlob) {
+    tempBlobUrl = URL.createObjectURL(videoBlob);
+    mediaSource = await loadVideo(tempBlobUrl);
+  } else if (videoUrl) {
+    mediaSource = await loadVideo(videoUrl);
+  } else if (imageUrl) {
+    mediaSource = await loadImage(imageUrl);
+  } else {
+    throw new Error("No video or image source provided for promo video");
+  }
 
   const canvas = document.createElement("canvas");
   canvas.width = width;
@@ -66,10 +81,24 @@ export async function createPromoVideo({
 
   return new Promise((resolve, reject) => {
     let settled = false;
+    const cleanup = () => {
+      if (tempBlobUrl) {
+        try { URL.revokeObjectURL(tempBlobUrl); } catch {}
+      }
+      if (mediaSource instanceof HTMLVideoElement) {
+        try {
+          mediaSource.pause();
+          mediaSource.src = "";
+          mediaSource.load();
+        } catch {}
+      }
+    };
+
     const maxWaitMs = Math.max(30000, durationMs + 20000);
     const timeoutTimer = setTimeout(() => {
       if (!settled) {
         settled = true;
+        cleanup();
         try { recorder.stop(); } catch {}
         reject(new Error("Promo video rendering timed out. Please try again."));
       }
@@ -79,6 +108,7 @@ export async function createPromoVideo({
       if (!settled) {
         settled = true;
         clearTimeout(timeoutTimer);
+        cleanup();
         resolve(b);
       }
     };
@@ -87,6 +117,7 @@ export async function createPromoVideo({
       if (!settled) {
         settled = true;
         clearTimeout(timeoutTimer);
+        cleanup();
         reject(err);
       }
     };
@@ -127,7 +158,7 @@ export async function createPromoVideo({
       }
 
       const progress = frame / totalFrames;
-      drawFrame(ctx, img, width, height, progress, text, zoomIntensity, isRTL);
+      drawFrame(ctx, mediaSource, width, height, progress, text, zoomIntensity, isRTL);
       frame++;
       requestAnimationFrame(renderFrame);
     };
@@ -146,9 +177,59 @@ function loadImage(url: string): Promise<HTMLImageElement> {
   });
 }
 
+function loadVideo(url: string): Promise<HTMLVideoElement> {
+  return new Promise((resolve, reject) => {
+    const video = document.createElement("video");
+    video.crossOrigin = "anonymous";
+    video.muted = true;
+    (video as any).defaultMuted = true;
+    video.playsInline = true;
+    video.loop = true;
+    video.autoplay = true;
+
+    let resolved = false;
+    const cleanup = () => {
+      video.removeEventListener("canplay", onReady);
+      video.removeEventListener("loadeddata", onReady);
+      video.removeEventListener("error", onError);
+    };
+
+    const onReady = async () => {
+      if (resolved) return;
+      resolved = true;
+      cleanup();
+      try {
+        await video.play();
+      } catch (err) {
+        console.warn("Video play error (can continue frame capture):", err);
+      }
+      resolve(video);
+    };
+
+    const onError = () => {
+      if (resolved) return;
+      resolved = true;
+      cleanup();
+      reject(new Error("Failed to load video element for animation"));
+    };
+
+    video.addEventListener("canplay", onReady);
+    video.addEventListener("loadeddata", onReady);
+    video.addEventListener("error", onError);
+
+    if (video.readyState >= 2) {
+      onReady();
+      return;
+    }
+
+    video.src = url;
+    video.load();
+  });
+}
+
 function drawFrame(
   ctx: CanvasRenderingContext2D,
-  img: HTMLImageElement,
+  source: HTMLVideoElement | HTMLImageElement,
   w: number,
   h: number,
   progress: number,
@@ -156,37 +237,57 @@ function drawFrame(
   zoomIntensity: number = 1,
   forceRTL?: boolean
 ) {
-  // Ken Burns: slow zoom in + slight pan; zoomIntensity scales the zoom delta
-  const zoomStart = 1.0;
-  const zoomEnd = 1.0 + 0.25 * Math.max(0, zoomIntensity);
-  const zoom = zoomStart + (zoomEnd - zoomStart) * easeInOutCubic(progress);
-
-  const panX = 20 * zoomIntensity * easeInOutCubic(progress);
-  const panY = 10 * zoomIntensity * Math.sin(progress * Math.PI);
-
+  const isVideo = source instanceof HTMLVideoElement;
   ctx.clearRect(0, 0, w, h);
   ctx.save();
 
-  // Center, scale, and pan
-  const drawW = w * zoom;
-  const drawH = h * zoom;
-  const offsetX = (w - drawW) / 2 + panX;
-  const offsetY = (h - drawH) / 2 + panY;
-
-  // Draw image covering the canvas
-  const imgAspect = img.width / img.height;
-  const canvasAspect = w / h;
-
-  let sx = 0, sy = 0, sw = img.width, sh = img.height;
-  if (imgAspect > canvasAspect) {
-    sw = img.height * canvasAspect;
-    sx = (img.width - sw) / 2;
+  if (isVideo) {
+    const video = source as HTMLVideoElement;
+    const vW = video.videoWidth || w;
+    const vH = video.videoHeight || h;
+    const vAspect = vW / vH;
+    const canvasAspect = w / h;
+    let sx = 0, sy = 0, sw = vW, sh = vH;
+    if (vAspect > canvasAspect) {
+      sw = vH * canvasAspect;
+      sx = (vW - sw) / 2;
+    } else {
+      sh = vW / canvasAspect;
+      sy = (vH - sh) / 2;
+    }
+    // Render the active animated video frame directly to canvas
+    ctx.drawImage(video, sx, sy, sw, sh, 0, 0, w, h);
   } else {
-    sh = img.width / canvasAspect;
-    sy = (img.height - sh) / 2;
-  }
+    const img = source as HTMLImageElement;
+    // Ken Burns: slow zoom in + slight pan; zoomIntensity scales the zoom delta
+    const zoomStart = 1.0;
+    const zoomEnd = 1.0 + 0.25 * Math.max(0, zoomIntensity);
+    const zoom = zoomStart + (zoomEnd - zoomStart) * easeInOutCubic(progress);
 
-  ctx.drawImage(img, sx, sy, sw, sh, offsetX, offsetY, drawW, drawH);
+    const panX = 20 * zoomIntensity * easeInOutCubic(progress);
+    const panY = 10 * zoomIntensity * Math.sin(progress * Math.PI);
+
+    // Center, scale, and pan
+    const drawW = w * zoom;
+    const drawH = h * zoom;
+    const offsetX = (w - drawW) / 2 + panX;
+    const offsetY = (h - drawH) / 2 + panY;
+
+    // Draw image covering the canvas
+    const imgAspect = img.width / img.height;
+    const canvasAspect = w / h;
+
+    let sx = 0, sy = 0, sw = img.width, sh = img.height;
+    if (imgAspect > canvasAspect) {
+      sw = img.height * canvasAspect;
+      sx = (img.width - sw) / 2;
+    } else {
+      sh = img.width / canvasAspect;
+      sy = (img.height - sh) / 2;
+    }
+
+    ctx.drawImage(img, sx, sy, sw, sh, offsetX, offsetY, drawW, drawH);
+  }
 
   // Gradient overlay at bottom for text
   if (text) {
