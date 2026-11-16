@@ -1533,9 +1533,9 @@ export default function SocialMedia() {
       console.error("Image gen error:", err);
       const msg = err?.message || "Failed to generate image";
       toast.error(msg);
+    } finally {
+      setIsGeneratingImage(false);
     }
-
-    setIsGeneratingImage(false);
   };
 
   const handleDownloadCurrentVideo = async () => {
@@ -1653,7 +1653,6 @@ export default function SocialMedia() {
             model: "gen3a_turbo",
             duration: 5,
             ratio: "1280:768",
-            format: "mp4",
           }),
         });
         if (!res.ok) {
@@ -1664,22 +1663,24 @@ export default function SocialMedia() {
         const taskId = taskData.id;
         let videoUrl = "";
         for (let i = 0; i < 30; i++) {
-          await new Promise((r) => setTimeout(r, 3000));
+          await new Promise((r) => setTimeout(r, 2500));
           const checkRes = await fetch(`https://api.dev.runwayml.com/v1/tasks/${taskId}`, {
             headers: {
               Authorization: `Bearer ${runwayKey}`,
               "X-Runway-Version": "2024-09-13",
             },
           });
-          if (checkRes.ok) {
-            const checkData = await checkRes.json();
-            if (checkData.status === "SUCCEEDED" && checkData.output?.[0]) {
-              videoUrl = checkData.output[0];
-              break;
-            }
-            if (checkData.status === "FAILED") {
-              throw new Error(`Runway video generation failed: ${checkData.failure || "Unknown error"}`);
-            }
+          if (!checkRes.ok) {
+            const errText = await checkRes.text();
+            throw new Error(`Runway polling error (${checkRes.status}): ${errText.slice(0, 150)}`);
+          }
+          const checkData = await checkRes.json();
+          if (checkData.status === "SUCCEEDED" && checkData.output?.[0]) {
+            videoUrl = checkData.output[0];
+            break;
+          }
+          if (checkData.status === "FAILED") {
+            throw new Error(`Runway video generation failed: ${checkData.failure || checkData.failureCode || "Generation failed"}`);
           }
         }
         if (!videoUrl) throw new Error("Runway video generation timed out");
@@ -1864,8 +1865,9 @@ export default function SocialMedia() {
       } else {
         toast.error(msg);
       }
+    } finally {
+      setIsGeneratingVideo(false);
     }
-    setIsGeneratingVideo(false);
   };
 
   const handleGenerateAIVideoWithAudio = async () => {
@@ -2067,8 +2069,9 @@ export default function SocialMedia() {
     } catch (err: any) {
       console.error("AI video+audio error:", err);
       toast.error(err?.message || "Failed to generate AI video with audio");
+    } finally {
+      setIsGeneratingVideoAudio(false);
     }
-    setIsGeneratingVideoAudio(false);
   };
 
   const handleConvertCurrentVideoToMp4 = async () => {

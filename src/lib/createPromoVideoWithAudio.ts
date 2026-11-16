@@ -245,12 +245,12 @@ export async function createPromoVideoWithAudio(opts: PromoVideoAudioOptions): P
   ]);
 
   const mimeCandidates = [
+    "video/mp4;codecs=avc1,mp4a.40.2",
+    "video/mp4;codecs=avc1,opus",
+    "video/mp4",
     "video/webm;codecs=vp9,opus",
     "video/webm;codecs=vp8,opus",
     "video/webm",
-    "video/mp4;codecs=avc1,opus",
-    "video/mp4;codecs=avc1,mp4a.40.2",
-    "video/mp4",
   ];
   let mimeType = "video/webm";
   for (const c of mimeCandidates) {
@@ -272,23 +272,57 @@ export async function createPromoVideoWithAudio(opts: PromoVideoAudioOptions): P
   };
 
   return new Promise<Blob>((resolve, reject) => {
+    let settled = false;
+    const maxWaitMs = Math.max(35000, targetDurMs + 25000);
+    const timeoutTimer = setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        try { audioCtx.close(); } catch {}
+        try { recorder.stop(); } catch {}
+        reject(new Error("AI video with audio rendering timed out. Please try again."));
+      }
+    }, maxWaitMs);
+
+    const safeResolve = (b: Blob) => {
+      if (!settled) {
+        settled = true;
+        clearTimeout(timeoutTimer);
+        try { audioCtx.close(); } catch {}
+        resolve(b);
+      }
+    };
+
+    const safeReject = (err: Error) => {
+      if (!settled) {
+        settled = true;
+        clearTimeout(timeoutTimer);
+        try { audioCtx.close(); } catch {}
+        reject(err);
+      }
+    };
+
     recorder.onstop = async () => {
-      try { audioCtx.close(); } catch { /* ignore */ }
       try {
         const rawBlob = new Blob(chunks, { type: mimeType });
-        // Directly produce Instagram-compliant MP4 (H.264 / AAC / yuv420p / faststart)
+        // If native MediaRecorder recorded MP4 directly, return immediately without unnecessary transcoding
+        if (mimeType.startsWith("video/mp4") || rawBlob.type.startsWith("video/mp4")) {
+          safeResolve(new Blob(chunks, { type: "video/mp4" }));
+          return;
+        }
+
+        // Transcode WebM to Instagram-compliant MP4 (H.264 / AAC / yuv420p / faststart)
         const mp4File = await convertWebmToMp4(rawBlob);
         const mp4Blob = new Blob([await mp4File.arrayBuffer()], { type: "video/mp4" });
-        resolve(mp4Blob);
+        safeResolve(mp4Blob);
       } catch (err) {
-        reject(
+        safeReject(
           new Error(
             `Failed to generate direct MP4 video with audio: ${err instanceof Error ? err.message : String(err)}`
           )
         );
       }
     };
-    recorder.onerror = () => reject(new Error("Recording failed"));
+    recorder.onerror = () => safeReject(new Error("Video recording failed"));
 
     recorder.start(250);
     const totalFrames = Math.floor((targetDurMs / 1000) * fps);

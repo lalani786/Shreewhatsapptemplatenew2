@@ -143,10 +143,16 @@ export async function getFFmpeg(onProgress?: VideoConversionProgressCallback): P
         onProgress?.(5, "Loading video conversion engine...");
         const coreBlob = await toBlobURL(src.coreURL, "text/javascript");
         const wasmBlob = await toBlobURL(src.wasmURL, "application/wasm");
-        await ffmpeg.load({
-          coreURL: coreBlob,
-          wasmURL: wasmBlob,
-        });
+        const timeoutPromise = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error(`Timeout loading video converter from ${src.coreURL}`)), 10000)
+        );
+        await Promise.race([
+          ffmpeg.load({
+            coreURL: coreBlob,
+            wasmURL: wasmBlob,
+          }),
+          timeoutPromise,
+        ]);
         loaded = true;
         break;
       } catch (err) {

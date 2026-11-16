@@ -38,6 +38,9 @@ export async function createPromoVideo({
   const chunks: Blob[] = [];
 
   const mimeCandidates = [
+    "video/mp4;codecs=avc1,mp4a.40.2",
+    "video/mp4;codecs=avc1",
+    "video/mp4",
     "video/webm;codecs=vp9",
     "video/webm;codecs=vp8",
     "video/webm",
@@ -60,22 +63,54 @@ export async function createPromoVideo({
   };
 
   return new Promise((resolve, reject) => {
+    let settled = false;
+    const maxWaitMs = Math.max(30000, durationMs + 20000);
+    const timeoutTimer = setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        try { recorder.stop(); } catch {}
+        reject(new Error("Promo video rendering timed out. Please try again."));
+      }
+    }, maxWaitMs);
+
+    const safeResolve = (b: Blob) => {
+      if (!settled) {
+        settled = true;
+        clearTimeout(timeoutTimer);
+        resolve(b);
+      }
+    };
+
+    const safeReject = (err: Error) => {
+      if (!settled) {
+        settled = true;
+        clearTimeout(timeoutTimer);
+        reject(err);
+      }
+    };
+
     recorder.onstop = async () => {
       try {
         const rawBlob = new Blob(chunks, { type: captureMime });
-        // Generate direct Instagram-compliant MP4 (H.264, yuv420p, faststart)
+        // If already MP4 from native MediaRecorder, return immediately without unnecessary transcoding
+        if (captureMime.startsWith("video/mp4") || rawBlob.type.startsWith("video/mp4")) {
+          safeResolve(new Blob(chunks, { type: "video/mp4" }));
+          return;
+        }
+
+        // Otherwise transcode WebM to MP4 with timeout
         const mp4File = await convertWebmToMp4(rawBlob);
         const mp4Blob = new Blob([await mp4File.arrayBuffer()], { type: "video/mp4" });
-        resolve(mp4Blob);
+        safeResolve(mp4Blob);
       } catch (err) {
-        reject(
+        safeReject(
           new Error(
             `Failed to generate direct MP4 promo video: ${err instanceof Error ? err.message : String(err)}`
           )
         );
       }
     };
-    recorder.onerror = () => reject(new Error("Video recording failed"));
+    recorder.onerror = () => safeReject(new Error("Video recording failed"));
 
     recorder.start();
 
