@@ -337,6 +337,11 @@ serve(async (req) => {
       imagePrompt,
       imageProvider,
       textProvider,
+      videoDuration,
+      videoAspectRatio,
+      voiceoverLanguage,
+      voiceGender,
+      selectedVoiceId,
     } = body;
 
     // Handle image generation request
@@ -529,7 +534,48 @@ serve(async (req) => {
     let systemPrompt = "";
     let userPrompt = "";
 
-    if (type === "marketing_template") {
+    if (type === "video_template") {
+      const personaTone = voiceGender === "male"
+        ? "an energetic, confident, authoritative commercial male voiceover persona"
+        : "a warm, vibrant, engaging commercial female voiceover persona";
+
+      systemPrompt =
+        `You are an expert commercial video director, multilingual copywriter, and voiceover producer.
+You create high-converting promotional video voiceover scripts optimized for social media marketing (Instagram Reels, YouTube Shorts, TikTok, Facebook).
+You craft voiceover scripts specifically tailored for ${personaTone}.
+You strictly follow target timing, word counts, and genuine native language scripts.`;
+
+      const hasDiscount = discount && discount > 0;
+      userPrompt =
+        `Create a promotional marketing video voiceover script and video background frame image prompt for:
+
+Business Type: ${businessType}
+Product Category: ${productCategory || "General products"}
+${
+          hasDiscount
+            ? `Discount: ${discount}% OFF`
+            : "No discount offer - focus on brand awareness and product showcase"
+        }
+Occasion: ${occasion}
+${customPrompt ? `Additional Instructions:\n${customPrompt}` : ""}
+
+VIDEO TIMING & VOICE SPECIFICATIONS:
+- Video Duration: ${videoDuration || 15} Seconds
+- Video Aspect Ratio: ${videoAspectRatio || "9:16"}
+- Voice Persona: ${voiceGender ? voiceGender.toUpperCase() : "COMMERCIAL"} (${personaTone})
+${voiceoverLanguage ? `- Voiceover Language: ${voiceoverLanguage}` : ""}
+
+Please provide:
+1. A video promo voiceover script (TEMPLATE) formatted strictly according to the exact duration, word count, native language, and voice actor tone (${voiceGender || "commercial"} persona).
+2. An AI image prompt (IMAGE_PROMPT) for a cinematic commercial video background frame matching aspect ratio (${videoAspectRatio || "9:16"}).
+
+Format your response exactly as:
+TEMPLATE:
+[Your video promo voiceover script here]
+
+IMAGE_PROMPT:
+[Your detailed video frame image prompt here]`;
+    } else if (type === "marketing_template") {
       systemPrompt =
         `You are an expert Indian marketing copywriter specializing in WhatsApp Business marketing. 
 You create engaging, festive, and culturally relevant marketing messages optimized for Indian audiences.
@@ -787,7 +833,7 @@ Provide a single message that is:
 
     console.log("AI response received:", content.substring(0, 200));
 
-    if (type === "marketing_template") {
+    if (type === "marketing_template" || type === "video_template") {
       const templateMatch = content.match(
         /TEMPLATE:\s*([\s\S]*?)(?=IMAGE_PROMPT:|$)/i,
       );
@@ -795,10 +841,15 @@ Provide a single message that is:
 
       const template = templateMatch?.[1]?.trim() || content;
       const hasDiscount = discount && discount > 0;
-      const generatedImagePrompt = imagePromptMatch?.[1]?.trim() ||
-        (hasDiscount
-          ? `Promotional poster for ${businessType} ${occasion} sale with ${discount}% discount, Indian festive theme, professional marketing design`
-          : `Promotional poster for ${businessType} ${occasion} celebration, product showcase, Indian festive theme, professional marketing design`);
+      const defaultFrame = type === "video_template"
+        ? (hasDiscount
+            ? `Cinematic commercial promotional video frame for ${businessType} ${occasion} sale with ${discount}% discount, 4k ultra-realistic commercial cinematography, professional studio lighting, aspect ratio ${videoAspectRatio || "9:16"}`
+            : `Cinematic commercial promotional video frame for ${businessType} ${occasion} celebration, 4k ultra-realistic commercial cinematography, professional studio lighting, aspect ratio ${videoAspectRatio || "9:16"}`)
+        : (hasDiscount
+            ? `Promotional poster for ${businessType} ${occasion} sale with ${discount}% discount, Indian festive theme, professional marketing design`
+            : `Promotional poster for ${businessType} ${occasion} celebration, product showcase, Indian festive theme, professional marketing design`);
+
+      const generatedImagePrompt = imagePromptMatch?.[1]?.trim() || defaultFrame;
 
       return new Response(
         JSON.stringify({ template, imagePrompt: generatedImagePrompt }),

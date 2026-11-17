@@ -1032,30 +1032,48 @@ CRITICAL RULES:
     }
 
     const isVideo = contentType === "video";
-    const scriptGuidance = isVideo ? getScriptPromptGuidance(voiceoverLanguage, videoDuration) : "";
+    const selectedVoiceObj = SUPPORTED_VOICES.find((v) => v.id === selectedVoiceId);
+    const voicePersonaGuidance = isVideo
+      ? `\nVOICE PERSONA & PERFORMANCE SPECIFICATIONS:
+- Voice Actor Gender: ${voiceGender.toUpperCase()}
+- Voice Persona / Actor: ${selectedVoiceObj?.name || (voiceGender === "male" ? "Aarav / Male Voice" : "Swara / Female Voice")}
+- Tone & Delivery: ${
+          voiceGender === "male"
+            ? "Bold, energetic, authoritative masculine commercial cadence with punchy, confident delivery."
+            : "Warm, inviting, vibrant feminine commercial cadence with captivating, friendly delivery."
+        }`
+      : "";
+    const scriptGuidance = isVideo
+      ? `${getScriptPromptGuidance(voiceoverLanguage, videoDuration)}${voicePersonaGuidance}`
+      : "";
     const aspectConfig = VIDEO_ASPECT_RATIOS[videoAspectRatio];
     const targetWordRule = VIDEO_DURATIONS.find((d) => d.duration === videoDuration) || VIDEO_DURATIONS[1];
 
     setIsGenerating(true);
     try {
+      let generatedTemplate = "";
+      let generatedImagePrompt = "";
+
       if (textProvider === "nvidia") {
-        toast.info(
-          isVideo
-            ? `Generating ${videoDuration}s video script & frame prompt with NVIDIA Nemotron...`
-            : "Generating marketing template with NVIDIA Nemotron Reasoning..."
-        );
-        const systemPrompt = isVideo
-          ? `You are an expert commercial video director, multilingual copywriter, and voiceover producer.
+        try {
+          toast.info(
+            isVideo
+              ? `Generating ${videoDuration}s video script & frame prompt with NVIDIA Nemotron...`
+              : "Generating marketing template with NVIDIA Nemotron Reasoning..."
+          );
+          const systemPrompt = isVideo
+            ? `You are an expert commercial video director, multilingual copywriter, and voiceover producer.
 You create high-converting promotional video voiceover scripts optimized for social media marketing (Instagram Reels, YouTube Shorts, TikTok, Facebook).
+You craft voiceover scripts specifically tailored for ${voiceGender === "male" ? "an energetic, confident, authoritative commercial male voice persona" : "a warm, vibrant, engaging commercial female voice persona"}.
 You strictly follow target timing, word counts, and genuine native language scripts.`
-          : `You are an expert Indian marketing copywriter specializing in WhatsApp Business marketing. 
+            : `You are an expert Indian marketing copywriter specializing in WhatsApp Business marketing. 
 You create engaging, festive, and culturally relevant marketing messages optimized for Indian audiences.
 Your messages are concise, use emojis appropriately, and include clear call-to-actions.
 Always maintain a professional yet friendly tone.`;
 
-        const hasDiscount = formData.discount[0] > 0;
-        const userPrompt = isVideo
-          ? `Create a promotional marketing video voiceover script and video background frame image prompt for:
+          const hasDiscount = formData.discount[0] > 0;
+          const userPrompt = isVideo
+            ? `Create a promotional marketing video voiceover script and video background frame image prompt for:
 
 Business Type: ${formData.businessType}
 Product Category: ${formData.productCategory || "General products"}
@@ -1063,14 +1081,14 @@ ${hasDiscount ? `Discount: ${formData.discount[0]}% OFF` : "No discount offer - 
 Occasion: ${formData.occasion}
 ${formData.customPrompt ? `Additional Instructions: ${formData.customPrompt}` : ""}
 
-VIDEO TIMING & LANGUAGE SPECIFICATIONS:
+VIDEO TIMING, VOICE PERSONA & LANGUAGE SPECIFICATIONS:
 - Video Duration: ${videoDuration} Seconds
 - Video Aspect Ratio: ${aspectConfig.name} (${aspectConfig.width}x${aspectConfig.height})
 - Script Target Word Count: EXACTLY ${targetWordRule.minWords} to ${targetWordRule.maxWords} words.
 ${scriptGuidance}
 
 Please provide:
-1. A video promo voiceover script (TEMPLATE) formatted strictly according to the exact duration, word count, and native script rules.
+1. A video promo voiceover script (TEMPLATE) formatted strictly according to the exact duration, word count, native script, and voice persona (${voiceGender} voice actor).
 2. An AI image prompt (IMAGE_PROMPT) for a cinematic commercial video background frame matching ${aspectConfig.name} (${aspectConfig.width}x${aspectConfig.height}).
 
 Format your response exactly as:
@@ -1079,7 +1097,7 @@ TEMPLATE:
 
 IMAGE_PROMPT:
 [Your detailed video frame image prompt here]`
-          : `Create a WhatsApp marketing message and promotional poster image prompt for:
+            : `Create a WhatsApp marketing message and promotional poster image prompt for:
 
 Business Type: ${formData.businessType}
 Product Category: ${formData.productCategory || "General products"}
@@ -1113,86 +1131,89 @@ TEMPLATE:
 IMAGE_PROMPT:
 [Your detailed image generation prompt here]`;
 
-        const res = await generateNvidiaChatCompletion({
-          model: "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: userPrompt },
-          ],
-          temperature: 0.6,
-          maxTokens: 4096,
-        });
+          const res = await generateNvidiaChatCompletion({
+            model: "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
+            messages: [
+              { role: "system", content: systemPrompt },
+              { role: "user", content: userPrompt },
+            ],
+            temperature: 0.6,
+            maxTokens: 4096,
+          });
 
-        const text = res.content || "";
-        const templateMatch = text.match(/TEMPLATE:\s*([\s\S]*?)(?=IMAGE_PROMPT:|$)/i);
-        const imagePromptMatch = text.match(/IMAGE_PROMPT:\s*([\s\S]*?)$/i);
+          const text = res.content || "";
+          const templateMatch = text.match(/TEMPLATE:\s*([\s\S]*?)(?=IMAGE_PROMPT:|$)/i);
+          const imagePromptMatch = text.match(/IMAGE_PROMPT:\s*([\s\S]*?)$/i);
 
-        const template = templateMatch ? templateMatch[1].trim() : text;
-        const rawImagePrompt = imagePromptMatch ? imagePromptMatch[1].trim() : text;
-        const imagePrompt = optimizeMarketingImagePrompt(rawImagePrompt, {
-          businessType: formData.businessType,
-          occasion: formData.occasion,
-          discount: formData.discount[0],
-        });
+          const template = templateMatch ? templateMatch[1].trim() : text;
+          const rawImagePrompt = imagePromptMatch ? imagePromptMatch[1].trim() : text;
+          const imagePrompt = optimizeMarketingImagePrompt(rawImagePrompt, {
+            businessType: formData.businessType,
+            occasion: formData.occasion,
+            discount: formData.discount[0],
+          });
 
-        setGeneratedContent({
-          template,
-          imagePrompt,
-          generatedImage: "",
-        });
-        if (isVideo) {
-          setVideoVoiceoverText(template);
-          setVideoVoiceoverAudio(null);
-          setVideoVoiceoverScript(null);
-          setGeneratedVideoBlob(null);
-          setGeneratedVideoUrl(null);
+          generatedTemplate = template;
+          generatedImagePrompt = imagePrompt;
+        } catch (nvidiaErr) {
+          console.warn("NVIDIA Nemotron generation failed, falling back to standard AI template generator:", nvidiaErr);
+          toast.warn("NVIDIA reasoning unavailable, falling back to AI generator...");
         }
-        toast.success(isVideo ? "Video script & frame prompt generated!" : "Template generated with NVIDIA Nemotron!");
-        setIsGenerating(false);
-        return;
       }
 
-      const response = await supabase.functions.invoke("generate-template", {
-        body: {
-          type: isVideo ? "video_template" : "marketing_template",
-          businessType: formData.businessType,
-          productCategory: formData.productCategory,
-          discount: formData.discount[0],
-          occasion: formData.occasion,
-          customPrompt: isVideo
-            ? `${formData.customPrompt ? `${formData.customPrompt}\n\n` : ""}${scriptGuidance}`
-            : formData.customPrompt,
-          textProvider,
-          videoDuration,
-          videoAspectRatio,
-          voiceoverLanguage,
-        },
-      });
+      if (!generatedTemplate) {
+        const response = await supabase.functions.invoke("generate-template", {
+          body: {
+            type: isVideo ? "video_template" : "marketing_template",
+            businessType: formData.businessType,
+            productCategory: formData.productCategory,
+            discount: formData.discount[0],
+            occasion: formData.occasion,
+            customPrompt: isVideo
+              ? `${formData.customPrompt ? `${formData.customPrompt}\n\n` : ""}${scriptGuidance}`
+              : formData.customPrompt,
+            textProvider: textProvider === "nvidia" ? "gemini" : textProvider,
+            videoDuration,
+            videoAspectRatio,
+            voiceoverLanguage,
+            voiceGender,
+            selectedVoiceId,
+          },
+        });
 
-      if (response.data?.error) {
-        toast.error(response.data.error);
-        return;
+        if (response.data?.error) {
+          throw new Error(response.data.error);
+        }
+        if (response.error) throw response.error;
+
+        generatedTemplate = response.data?.template || "";
+        generatedImagePrompt = response.data?.imagePrompt || "";
       }
-      if (response.error) throw response.error;
+
+      if (!generatedTemplate) {
+        throw new Error("No template script was generated. Please try again.");
+      }
 
       setGeneratedContent({
-        template: response.data.template,
-        imagePrompt: response.data.imagePrompt,
+        template: generatedTemplate,
+        imagePrompt: generatedImagePrompt,
         generatedImage: "",
       });
       if (isVideo) {
-        setVideoVoiceoverText(response.data.template);
+        setVideoVoiceoverText(generatedTemplate);
         setVideoVoiceoverAudio(null);
         setVideoVoiceoverScript(null);
         setGeneratedVideoBlob(null);
         setGeneratedVideoUrl(null);
       }
       toast.success(isVideo ? "Video template generated successfully!" : "Template generated successfully!");
-    } catch (error) {
+    } catch (error: any) {
       console.error("Generation error:", error);
-      toast.error("Failed to generate template. Please try again.");
+      const msg = error?.message || "Failed to generate template. Please try again.";
+      toast.error(msg);
+    } finally {
+      setIsGenerating(false);
     }
-    setIsGenerating(false);
   };
 
   const handleCopy = (text: string, type: string) => {
