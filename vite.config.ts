@@ -61,6 +61,15 @@ export default defineConfig(() => ({
         rewrite: (path) => path.replace(/^\/api\/runway-dev/, ""),
         secure: true,
       },
+      "/api/tts": {
+        target: "https://translate.google.com",
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api\/tts/, ""),
+        secure: true,
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+        },
+      },
     },
   },
   plugins: [react(), spaFallbackPlugin()],

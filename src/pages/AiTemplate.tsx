@@ -78,6 +78,7 @@ import {
   loadPollinationsApiKeyFromSupabase,
   getStoredPollinationsApiKey,
 } from "@/lib/pollinationsKey";
+import { synthesizeVoiceAudio, validateScriptForLanguage } from "@/lib/voiceSynthesis";
 import {
   DEFAULT_LEGACY_POLLINATIONS_MODEL,
   POLLINATIONS_MODELS,
@@ -102,7 +103,8 @@ type ImageProvider =
   | "nvidia"
   | "cosmos"
   | "pexels"
-  | "runway";
+  | "runway"
+  | "veo";
 
 interface ImageProviderOption {
   id: ImageProvider;
@@ -112,8 +114,9 @@ interface ImageProviderOption {
 }
 
 const imageProviders: ImageProviderOption[] = [
-  { id: "auto", label: "Automatic (Fallback)", keyName: "", description: "Tries Runway → NVIDIA → Cosmos → Pollinations → Shree AI" },
+  { id: "auto", label: "Automatic (Fallback)", keyName: "", description: "Tries Runway → Veo → Pexels → NVIDIA → Pollinations" },
   { id: "runway", label: "Runway Gen-3 (AI Video)", keyName: "runway_api_key", description: "Real AI Image-to-Video & 360° motion" },
+  { id: "veo", label: "Google Veo 3.1 / 2 (Cinematic Video)", keyName: "gemini_api_key", description: "Google Flow quality video generation" },
   { id: "pexels", label: "Pexels Stock Video", keyName: "pexels_api_key", description: "Commercial HD/4K Video Clips" },
   { id: "pollinations", label: "Pollinations.ai", keyName: "pollinations_api_key", description: "High-quality image catalog (Flux/Turbo)" },
   { id: "nvidia", label: "NVIDIA AI (Free)", keyName: "nvidia_api_key", description: "Free NIM image generation" },
@@ -268,9 +271,12 @@ export default function AiTemplate() {
     const localRunway = localStorage.getItem("runway_api_key")?.trim() || "";
     const localPexels = localStorage.getItem("pexels_api_key")?.trim() || "";
     const localPoll = localStorage.getItem("pollinations_api_key")?.trim() || "";
+    const localGemini = localStorage.getItem("gemini_api_key")?.trim() || "";
+    const localEleven = localStorage.getItem("elevenlabs_api_key")?.trim() || "";
 
     if (localRunway) setUserRunwayKey(localRunway);
     if (localPoll) setPollinationsApiKey(localPoll);
+    if (localEleven) setUserElevenLabsKey(localEleven);
 
     setAvailableKeys(prev => ({
       ...prev,
@@ -280,6 +286,8 @@ export default function AiTemplate() {
       runway_api_key: Boolean(localRunway || prev.runway_api_key),
       pexels_api_key: Boolean(localPexels || prev.pexels_api_key),
       pollinations_api_key: Boolean(localPoll || prev.pollinations_api_key),
+      gemini_api_key: Boolean(localGemini || prev.gemini_api_key),
+      elevenlabs_api_key: Boolean(localEleven || prev.elevenlabs_api_key),
     }));
 
     // 2. Fetch Pollinations key from dedicated Supabase table (ai_api_keys)
@@ -422,6 +430,32 @@ export default function AiTemplate() {
     }
     const langObj = SUPPORTED_LANGUAGES.find((l) => l.id === newLangId);
     toast.info(`Language set to ${langObj?.label || newLangId}. Audio & video cache cleared.`);
+
+    // If script is present, ensure it matches native writing system
+    const currentScript = (videoVoiceoverText || generatedContent.template || "").trim();
+    if (currentScript) {
+      const scriptCheck = validateScriptForLanguage(currentScript, newLangId);
+      if (!scriptCheck.isValid) {
+        // Regenerate template with authentic native writing system
+        const fallback = generateSmartFallbackTemplate({
+          businessType: formData.businessType || "Retail Store",
+          productCategory: formData.productCategory,
+          discount: formData.discount[0],
+          occasion: formData.occasion || "Celebration",
+          customPrompt: formData.customPrompt,
+          isVideo: contentType === "video",
+          videoDuration,
+          aspectRatio: videoAspectRatio,
+          language: newLangId,
+          gender: voiceGender,
+        });
+        if (fallback.template) {
+          setVideoVoiceoverText(fallback.template);
+          setGeneratedContent((prev) => ({ ...prev, template: fallback.template }));
+          toast.success(`Voiceover script updated to native ${langObj?.nativeName || newLangId}!`);
+        }
+      }
+    }
   };
 
   const handleGenderChange = (newGender: "male" | "female") => {
@@ -433,6 +467,26 @@ export default function AiTemplate() {
     // Invalidate audio cache on voice change
     setVideoVoiceoverAudio(null);
     setVideoVoiceoverScript(null);
+
+    if (contentType === "video" && formData.businessType) {
+      const fallback = generateSmartFallbackTemplate({
+        businessType: formData.businessType,
+        productCategory: formData.productCategory,
+        discount: formData.discount[0],
+        occasion: formData.occasion || "Celebration",
+        customPrompt: formData.customPrompt,
+        isVideo: true,
+        videoDuration,
+        aspectRatio: videoAspectRatio,
+        language: voiceoverLanguage,
+        gender: newGender,
+      });
+      if (fallback.template) {
+        setVideoVoiceoverText(fallback.template);
+        setGeneratedContent((prev) => ({ ...prev, template: fallback.template }));
+      }
+    }
+    toast.info(`Voice persona changed to ${newGender === "male" ? "Male" : "Female"}`);
   };
 
   const handlePreviewVoiceover = async () => {
@@ -445,39 +499,30 @@ export default function AiTemplate() {
       try {
         voicePreviewAudioRef.current.pause();
       } catch {}
-        voicePreviewAudioRef.current = null;
+      voicePreviewAudioRef.current = null;
     }
     setIsPreviewingVoice(true);
     try {
       const langObj = SUPPORTED_LANGUAGES.find((l) => l.id === voiceoverLanguage);
-      toast.info(`Synthesizing voiceover (${langObj?.label || voiceoverLanguage})...`);
-
-      const res = await supabase.functions.invoke("generate-video-audio", {
-        body: {
-          voiceText: text,
-          voiceId: selectedVoiceId,
-          language: voiceoverLanguage,
-          apiKey: userElevenLabsKey || undefined,
-        },
-      });
-
-      let audioBase64: string | null = null;
-      if (res.data?.voiceAudio) {
-        audioBase64 = res.data.voiceAudio;
-      } else if (res.data?.voiceError) {
-        console.warn("ElevenLabs voice error, trying backup free TTS:", res.data.voiceError);
-        const fbRes = await supabase.functions.invoke("generate-video-audio", {
-          body: { voiceText: text, action: "free_tts", language: voiceoverLanguage },
-        });
-        if (fbRes.data?.voiceAudio) {
-          audioBase64 = fbRes.data.voiceAudio;
-        }
+      const scriptCheck = validateScriptForLanguage(text, voiceoverLanguage);
+      if (!scriptCheck.isValid && scriptCheck.warning) {
+        toast.info(scriptCheck.warning);
       }
 
-      if (audioBase64) {
-        setVideoVoiceoverAudio(audioBase64);
+      toast.info(`Synthesizing voiceover (${langObj?.nativeName || voiceoverLanguage})...`);
+
+      const synthResult = await synthesizeVoiceAudio({
+        text,
+        language: voiceoverLanguage,
+        voiceGender,
+        voiceId: selectedVoiceId,
+        elevenLabsKey: userElevenLabsKey,
+      });
+
+      if (synthResult.audioBase64) {
+        setVideoVoiceoverAudio(synthResult.audioBase64);
         setVideoVoiceoverScript(text);
-        const audio = new Audio(`data:audio/mpeg;base64,${audioBase64}`);
+        const audio = new Audio(`data:audio/mpeg;base64,${synthResult.audioBase64}`);
         voicePreviewAudioRef.current = audio;
         audio.onended = () => setIsPreviewingVoice(false);
         audio.onerror = () => {
@@ -485,23 +530,14 @@ export default function AiTemplate() {
           toast.error("Audio playback error");
         };
         await audio.play();
-        toast.success(`Playing voice preview (${langObj?.nativeName || "Native"})`);
+        toast.success(`Playing native ${langObj?.nativeName || "voice"} preview`);
       } else {
-        if ("speechSynthesis" in window) {
-          window.speechSynthesis.cancel();
-          const utterance = new SpeechSynthesisUtterance(text);
-          utterance.lang = voiceoverLanguage;
-          utterance.onend = () => setIsPreviewingVoice(false);
-          utterance.onerror = () => setIsPreviewingVoice(false);
-          window.speechSynthesis.speak(utterance);
-          toast.info("Playing preview with browser speech synthesis");
-        } else {
-          throw new Error("Unable to synthesize audio. Check ElevenLabs key or connection.");
-        }
+        throw new Error("Unable to synthesize audio. Check network connection or API Setup.");
       }
     } catch (err: any) {
       console.error("Voice preview error:", err);
       toast.error(err.message || "Failed to generate voice preview");
+    } finally {
       setIsPreviewingVoice(false);
     }
   };
@@ -517,28 +553,16 @@ export default function AiTemplate() {
       let audioBase64 = videoVoiceoverAudio;
       if (!audioBase64) {
         toast.info("Synthesizing audio for download...");
-        const res = await supabase.functions.invoke("generate-video-audio", {
-          body: {
-            voiceText: text,
-            voiceId: selectedVoiceId,
-            language: voiceoverLanguage,
-            apiKey: userElevenLabsKey || undefined,
-          },
+        const synthResult = await synthesizeVoiceAudio({
+          text,
+          language: voiceoverLanguage,
+          voiceGender,
+          voiceId: selectedVoiceId,
+          elevenLabsKey: userElevenLabsKey,
         });
-        if (res.data?.voiceAudio) {
-          audioBase64 = res.data.voiceAudio;
-          setVideoVoiceoverAudio(audioBase64);
-          setVideoVoiceoverScript(text);
-        } else {
-          const fbRes = await supabase.functions.invoke("generate-video-audio", {
-            body: { voiceText: text, action: "free_tts", language: voiceoverLanguage },
-          });
-          if (fbRes.data?.voiceAudio) {
-            audioBase64 = fbRes.data.voiceAudio;
-            setVideoVoiceoverAudio(audioBase64);
-            setVideoVoiceoverScript(text);
-          }
-        }
+        audioBase64 = synthResult.audioBase64;
+        setVideoVoiceoverAudio(audioBase64);
+        setVideoVoiceoverScript(text);
       }
 
       if (!audioBase64) {
@@ -553,15 +577,15 @@ export default function AiTemplate() {
       const blobUrl = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = blobUrl;
-      link.download = `voiceover-${voiceoverLanguage}-${Date.now()}.mp3`;
+      link.download = `voiceover-${voiceoverLanguage}-${voiceGender}-${Date.now()}.mp3`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
       setTimeout(() => URL.revokeObjectURL(blobUrl), 30000);
       toast.success("Voice audio downloaded (.mp3)");
     } catch (err: any) {
-      console.error("Audio download error:", err);
-      toast.error(err.message || "Failed to download voice audio");
+      console.error("Voice download error:", err);
+      toast.error(err.message || "Failed to download voiceover");
     } finally {
       setIsDownloadingVoice(false);
     }
@@ -589,22 +613,35 @@ export default function AiTemplate() {
 
   const toAccessibleImageUrl = async (url: string): Promise<string> => {
     if (!url) return "";
-    if (url.startsWith("data:") || url.startsWith("https://") || url.startsWith("http://")) {
+    if (url.startsWith("https://") || url.startsWith("http://")) {
       return url;
     }
-    if (url.startsWith("blob:")) {
+    // If it's a data URL or blob URL, attempt to upload to public storage so Runway/Veo receives a valid HTTPS URL
+    if (url.startsWith("data:") || url.startsWith("blob:")) {
       try {
-        const res = await fetch(url);
-        const blob = await res.blob();
-        return await new Promise<string>((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onloadend = () => resolve(reader.result as string);
-          reader.onerror = reject;
-          reader.readAsDataURL(blob);
+        let blob: Blob;
+        if (url.startsWith("blob:")) {
+          const res = await fetch(url);
+          blob = await res.blob();
+        } else {
+          const res = await fetch(url);
+          blob = await res.blob();
+        }
+
+        const { data: { user } } = await supabase.auth.getUser();
+        const path = `${user?.id || "public"}/frame_${Date.now()}.png`;
+        const { error: upErr } = await supabase.storage.from("whatsapp-media").upload(path, blob, {
+          contentType: "image/png",
+          upsert: true,
         });
-      } catch (e) {
-        console.warn("Failed to convert blob URL to data URI:", e);
-        return url;
+        if (!upErr) {
+          const { data: pub } = supabase.storage.from("whatsapp-media").getPublicUrl(path);
+          if (pub?.publicUrl) {
+            return pub.publicUrl;
+          }
+        }
+      } catch (uploadErr) {
+        console.warn("Could not upload frame to public storage:", uploadErr);
       }
     }
     return url;
@@ -612,24 +649,24 @@ export default function AiTemplate() {
 
   const buildDynamicMotionPrompt = (customUserPrompt?: string): string => {
     const parts: string[] = [];
-    const subject = (formData.productCategory || formData.businessType || "premium footwear product").trim();
+    const subject = (formData.productCategory || formData.businessType || "footwear product").trim();
     const occasion = (formData.occasion || "commercial showcase").trim();
 
-    parts.push(`Cinematic commercial advertisement video showcasing ${subject} for ${occasion}.`);
+    parts.push(`Google Flow cinematic commercial advertisement video showcasing ${subject} for ${occasion}.`);
 
     const details = customUserPrompt || generatedContent.imagePrompt || "";
     if (details.trim()) {
-      parts.push(`Product identity & design details: ${details.trim()}.`);
+      parts.push(`Product identity & construction details: ${details.trim()}.`);
     }
 
-    // Dynamic motion instructions ensuring actual visual motion (rotation, dolly, orbit, lighting):
+    // Google Flow motion quality directives (rotation, camera tracking, dynamic lighting, product locking)
     parts.push(
-      "Visual Motion & Camera: Smooth 360-degree continuous product rotation displaying outsole tread, midsole, side profile, and footwear upper construction.",
-      "Cinematic slow zoom-in with smooth dolly tracking and orbital camera pan around the product.",
-      "Animated dynamic studio lighting with moving specular reflections, soft realistic shadows shifting across the ground plane.",
-      "Gentle atmospheric floating dust particles with subtle depth of field transitions.",
-      "Strictly preserve exact product identity, footwear silhouette, colors, materials, branding, and logo without distortion or morphing.",
-      "Fluid continuous multi-frame video motion, high framerate commercial quality, ultra-sharp 4K commercial advertisement grade."
+      "Cinematic Camera Choreography: Continuous 360-degree turntable product rotation revealing bottom outsole tread, midsole cushioning, heel counter, side profile, and footwear upper construction.",
+      "Dynamic slow zoom-in with smooth dolly tracking and orbital sweeping camera movement around the product.",
+      "Lighting & Shadows: Moving commercial studio spotlight illumination, soft specular reflections gliding across product surfaces, realistic contact shadows shifting along the ground plane.",
+      "Atmospheric Motion: Subtle floating ambient dust particles, gentle atmospheric haze with shallow depth of field bokeh transitions.",
+      "Product Preservation: Strict product identity lock—preserve authentic footwear silhouette, color scheme, materials, stitching, shoe laces, and brand logo with zero warping or distortion.",
+      "Ultra high framerate, photorealistic 4K commercial advertisement quality with fluid continuous multi-frame motion."
     );
 
     if (formData.customPrompt?.trim()) {
@@ -644,32 +681,62 @@ export default function AiTemplate() {
     promptText?: string;
     durationSeconds: VideoDuration;
     aspectRatio: VideoAspectRatio;
-  }): Promise<Blob> => {
+  }): Promise<Blob | null> => {
     const { imageUrl, promptText = "", durationSeconds, aspectRatio } = options;
 
     const runwayKey = await getStoredRunwayKey();
     const isRunwaySelected = imageProvider === "runway";
+    const isVeoSelected = imageProvider === "veo";
     const isPexelsSelected = imageProvider === "pexels";
     const isAuto = imageProvider === "auto";
 
-    // 1. Runway Gen-3 Alpha Image-to-Video / Text-to-Video
-    if (isRunwaySelected || (isAuto && runwayKey)) {
-      if (!runwayKey && isRunwaySelected) {
-        toast.info("Runway API key not configured. Rendering dynamic motion video with camera transitions...");
-        return null;
-      }
+    let accessibleImage = "";
+    if (imageUrl) {
+      accessibleImage = await toAccessibleImageUrl(imageUrl);
+    }
+    const motionPrompt = buildDynamicMotionPrompt(promptText);
 
+    // 1. Primary: Use secure Supabase Edge Function image-to-video (no browser CORS restrictions)
+    try {
+      toast.info(`Requesting real AI video frames (${imageProvider === "auto" ? "Runway / Veo" : imageProvider})...`);
+      const { data: edgeData, error: edgeErr } = await supabase.functions.invoke("image-to-video", {
+        body: {
+          prompt: motionPrompt,
+          image: accessibleImage,
+          provider: imageProvider,
+          aspectRatio,
+          durationSeconds,
+          productCategory: formData.productCategory,
+          businessType: formData.businessType,
+          apiKey: runwayKey || undefined,
+        },
+      });
+
+      if (!edgeErr && edgeData?.success && edgeData.videoUrl) {
+        toast.info("Downloading AI-generated video frames...");
+        const dlRes = await fetch(edgeData.videoUrl);
+        if (dlRes.ok) {
+          const videoBlob = await dlRes.blob();
+          await assertMp4Video(videoBlob, edgeData.provider || "AI Video");
+          return videoBlob;
+        }
+      } else if (edgeData?.error) {
+        console.warn("image-to-video edge function reported:", edgeData.error);
+        if (isRunwaySelected || isVeoSelected) {
+          toast.warning(edgeData.error);
+        }
+      }
+    } catch (edgeCallErr) {
+      console.warn("image-to-video edge invoke failed, checking direct client fallback:", edgeCallErr);
+    }
+
+    // 2. Direct Runway Gen-3 Alpha Call (via Vite dev proxy or direct API)
+    if (isRunwaySelected || (isAuto && runwayKey)) {
       if (runwayKey) {
         try {
           const cleanRunwayKey = runwayKey.replace(/^Bearer\s+/i, "").trim();
-          toast.info("Connecting to Runway Gen-3 AI video engine...");
+          toast.info("Connecting directly to Runway Gen-3 AI engine...");
 
-          let accessibleImage = "";
-          if (imageUrl) {
-            accessibleImage = await toAccessibleImageUrl(imageUrl);
-          }
-
-          const motionPrompt = buildDynamicMotionPrompt(promptText);
           const runwayRatio = aspectRatio === "9:16" ? "768:1280" : "1280:768";
           const runwayDuration = durationSeconds >= 10 ? 10 : 5;
 
@@ -679,8 +746,7 @@ export default function AiTemplate() {
             duration: runwayDuration,
             ratio: runwayRatio,
           };
-
-          if (accessibleImage) {
+          if (accessibleImage && (accessibleImage.startsWith("https://") || accessibleImage.startsWith("http://"))) {
             requestBody.promptImage = accessibleImage;
           }
 
@@ -702,102 +768,67 @@ export default function AiTemplate() {
                 },
                 body: JSON.stringify(requestBody),
               });
-
               if (attempt.ok) {
                 res = attempt;
                 chosenBase = base;
                 break;
               }
-
               const errText = await attempt.text();
               if (errText.includes("Incorrect hostname for API key")) {
-                console.warn(`Runway returned 'Incorrect hostname' on ${base}, attempting alternate hostname...`);
                 continue;
               }
-
-              const errJson = (() => { try { return JSON.parse(errText); } catch { return null; } })();
-              const msg = errJson?.error || errJson?.message || errText.slice(0, 180);
-              if (attempt.status === 401) {
-                toast.error("Invalid Runway API key (401 Unauthorized). Please check your key in API Setup.");
-              } else if (attempt.status === 402 || attempt.status === 403 || msg.toLowerCase().includes("credit")) {
-                toast.error("Insufficient Runway credits (402/403). Please top up credits on runwayml.com.");
-              } else {
-                toast.warning(`Runway API returned status ${attempt.status}: ${msg}`);
-              }
-              throw new Error(`Runway API error: ${msg}`);
+              throw new Error(`Runway API: ${errText.slice(0, 150)}`);
             } catch (err: any) {
-              if (err.message?.includes("Runway API error")) throw err;
-              console.warn(`Runway attempt failed on ${base}:`, err);
+              if (err.message?.includes("Runway API:")) throw err;
             }
           }
 
-          if (!res || !res.ok) {
-            throw new Error("Could not connect to Runway AI. Falling back to animated motion video engine.");
-          }
+          if (res && res.ok) {
+            const taskData = await res.json();
+            const taskId = taskData.id;
+            if (taskId) {
+              toast.info("Runway AI video animating... Polling progress...");
+              let videoUrl = "";
+              for (let i = 0; i < 40; i++) {
+                await new Promise((r) => setTimeout(r, 3000));
+                const checkRes = await fetch(`${chosenBase}/v1/tasks/${taskId}`, {
+                  headers: {
+                    Authorization: `Bearer ${cleanRunwayKey}`,
+                    "X-Runway-Version": "2024-09-13",
+                  },
+                });
+                if (checkRes.ok) {
+                  const checkData = await checkRes.json();
+                  if (checkData.status === "SUCCEEDED" && checkData.output?.[0]) {
+                    videoUrl = checkData.output[0];
+                    break;
+                  }
+                  if (checkData.status === "FAILED") {
+                    throw new Error(`Runway video failed: ${checkData.failure || "Generation failed"}`);
+                  }
+                  if (checkData.progress) {
+                    toast.info(`Runway AI video animating... ${Math.round(checkData.progress * 100)}%`);
+                  }
+                }
+              }
 
-          const taskData = await res.json();
-          const taskId = taskData.id;
-          if (!taskId) throw new Error("Runway did not return a valid task ID.");
-
-          toast.info("Runway AI video animating... Polling progress...");
-          let videoUrl = "";
-          for (let i = 0; i < 40; i++) {
-            await new Promise((r) => setTimeout(r, 3000));
-            let checkRes: Response;
-            try {
-              checkRes = await fetch(`${chosenBase}/v1/tasks/${taskId}`, {
-                headers: {
-                  Authorization: `Bearer ${cleanRunwayKey}`,
-                  "X-Runway-Version": "2024-09-13",
-                },
-              });
-            } catch (pollErr: any) {
-              console.warn("Runway polling transient fetch error, retrying...", pollErr);
-              continue;
-            }
-
-            if (!checkRes.ok) {
-              const errText = await checkRes.text();
-              throw new Error(`Runway polling error (${checkRes.status}): ${errText.slice(0, 150)}`);
-            }
-            const checkData = await checkRes.json();
-            if (checkData.status === "SUCCEEDED" && checkData.output?.[0]) {
-              videoUrl = checkData.output[0];
-              break;
-            }
-            if (checkData.status === "FAILED") {
-              throw new Error(
-                `Runway video generation failed: ${checkData.failure || checkData.failureCode || "Generation failed"}`
-              );
-            }
-            if (checkData.progress) {
-              toast.info(`Runway AI video animating... ${Math.round(checkData.progress * 100)}%`);
+              if (videoUrl) {
+                const dlRes = await fetch(videoUrl);
+                if (dlRes.ok) {
+                  const videoBlob = await dlRes.blob();
+                  await assertMp4Video(videoBlob, "Runway Gen-3");
+                  return videoBlob;
+                }
+              }
             }
           }
-
-          if (!videoUrl) throw new Error("Runway video generation timed out. Please try again.");
-
-          toast.info("Downloading generated animated MP4 video...");
-          const dlRes = await fetch(videoUrl);
-          if (!dlRes.ok) throw new Error("Could not download generated Runway video");
-          const videoBlob = await dlRes.blob();
-          await assertMp4Video(videoBlob, "Runway Gen-3");
-          return videoBlob;
-        } catch (runwayErr: any) {
-          console.warn("Runway video generation encountered an issue:", runwayErr);
-          const isCors = runwayErr?.message?.includes("Failed to fetch");
-          if (isCors) {
-            toast.warning("Runway API restricted by browser CORS. Rendering high-definition animated MP4 video...", {
-              description: "Generating dynamic multi-layer animated MP4 with synchronized voiceover and text overlays.",
-            });
-          } else {
-            toast.warning(`Runway: ${runwayErr.message || "Failed"}. Using animated motion engine.`);
-          }
+        } catch (directErr: any) {
+          console.warn("Direct Runway call error:", directErr);
         }
       }
     }
 
-    // 2. Pexels Commercial Stock Video
+    // 3. Pexels Commercial Stock Footage
     if (isPexelsSelected || (isAuto && availableKeys["pexels_api_key"])) {
       try {
         toast.info("Searching commercial stock video footage on Pexels (Direct MP4)...");
@@ -805,17 +836,13 @@ export default function AiTemplate() {
         const { data: px, error: pxErr } = await supabase.functions.invoke("pexels-search", {
           body: { query: searchQuery.trim(), kind: "video" },
         });
-        if (pxErr) throw pxErr;
-        if (px?.error) throw new Error(px.error);
-        if (px?.videoUrl) {
+        if (!pxErr && px?.videoUrl) {
           const res = await fetch(px.videoUrl);
           if (res.ok) {
             const videoBlob = await res.blob();
-            if (videoBlob.size <= 50 * 1024 * 1024) {
-              await assertMp4Video(videoBlob, "Pexels");
-              if (px.credit) toast.info(`Video by ${px.credit} on Pexels`);
-              return videoBlob;
-            }
+            await assertMp4Video(videoBlob, "Pexels");
+            if (px.credit) toast.info(`Video footage by ${px.credit} on Pexels`);
+            return videoBlob;
           }
         }
       } catch (pxErr: any) {
@@ -823,7 +850,6 @@ export default function AiTemplate() {
       }
     }
 
-    // 3. Fallback: return null so createPromoVideoWithAudio animates the high-resolution product frame
     return null;
   };
 
@@ -846,6 +872,13 @@ export default function AiTemplate() {
         durationSeconds: videoDuration,
         aspectRatio: videoAspectRatio,
       });
+
+      if (!animatedVideoBlob && (imageProvider === "runway" || imageProvider === "veo")) {
+        toast.warning(
+          `Real ${imageProvider.toUpperCase()} video frames could not be retrieved. Rendering promo preview with motion framing and synchronized voiceover.`,
+          { description: "Ensure your API key has active credits in API Setup for genuine AI video frames." }
+        );
+      }
 
       // Step 2: Overlay audio and text over the real animated video frames
       let videoBlob: Blob;
@@ -881,7 +914,11 @@ export default function AiTemplate() {
       const url = URL.createObjectURL(videoBlob);
       setGeneratedVideoUrl(url);
       setIsVideoPreviewOpen(true);
-      toast.success(`Promo video (${videoDuration}s, ${width}×${height} MP4) generated with real animated motion!`);
+      if (animatedVideoBlob) {
+        toast.success(`Promo video (${videoDuration}s, ${width}×${height} MP4) generated with real animated motion!`);
+      } else {
+        toast.info(`Promo video preview (${videoDuration}s, ${width}×${height} MP4) generated with synchronized voiceover & text.`);
+      }
     } catch (err: any) {
       console.error("Promo video generation error:", err);
       toast.error(err.message || "Failed to generate promo video");
@@ -916,7 +953,7 @@ export default function AiTemplate() {
             height: reqH,
           });
           imageUrl = res.imageUrl;
-        } else if (imageProvider !== "runway" && imageProvider !== "pexels") {
+        } else if (imageProvider !== "runway" && imageProvider !== "pexels" && imageProvider !== "veo") {
           const res = await supabase.functions.invoke("generate-template", {
             body: {
               type: "generate_image",
@@ -934,29 +971,20 @@ export default function AiTemplate() {
       let audioBase64 = videoVoiceoverAudio;
       const scriptText = (videoVoiceoverText || generatedContent.template || "").trim();
       if (!audioBase64 && scriptText) {
-        toast.info(`Generating ${SUPPORTED_LANGUAGES.find((l) => l.id === voiceoverLanguage)?.label || voiceoverLanguage} voiceover...`);
+        const langObj = SUPPORTED_LANGUAGES.find((l) => l.id === voiceoverLanguage);
+        toast.info(`Generating ${langObj?.nativeName || voiceoverLanguage} voiceover...`);
         try {
-          const audioRes = await supabase.functions.invoke("generate-video-audio", {
-            body: {
-              voiceText: scriptText,
-              voiceId: selectedVoiceId,
-              language: voiceoverLanguage,
-              apiKey: userElevenLabsKey || undefined,
-            },
+          const synthRes = await synthesizeVoiceAudio({
+            text: scriptText,
+            language: voiceoverLanguage,
+            voiceGender,
+            voiceId: selectedVoiceId,
+            elevenLabsKey: userElevenLabsKey,
           });
-          if (audioRes.data?.voiceAudio) {
-            audioBase64 = audioRes.data.voiceAudio;
+          if (synthRes.audioBase64) {
+            audioBase64 = synthRes.audioBase64;
             setVideoVoiceoverAudio(audioBase64);
             setVideoVoiceoverScript(scriptText);
-          } else {
-            const fbRes = await supabase.functions.invoke("generate-video-audio", {
-              body: { voiceText: scriptText, action: "free_tts", language: voiceoverLanguage },
-            });
-            if (fbRes.data?.voiceAudio) {
-              audioBase64 = fbRes.data.voiceAudio;
-              setVideoVoiceoverAudio(audioBase64);
-              setVideoVoiceoverScript(scriptText);
-            }
           }
         } catch (aErr) {
           console.warn("Audio synthesis error:", aErr);
@@ -970,6 +998,13 @@ export default function AiTemplate() {
         durationSeconds: videoDuration,
         aspectRatio: videoAspectRatio,
       });
+
+      if (!animatedVideoBlob && (imageProvider === "runway" || imageProvider === "veo")) {
+        toast.warning(
+          `Real ${imageProvider.toUpperCase()} video frames could not be retrieved. Rendering promo preview with motion framing and synchronized voiceover.`,
+          { description: "Ensure your API key has active credits in API Setup for genuine AI video frames." }
+        );
+      }
 
       const { width, height } = getVideoDimensions(videoAspectRatio, videoQuality);
       const durationMs = videoDuration * 1000;
@@ -1007,7 +1042,11 @@ export default function AiTemplate() {
       const url = URL.createObjectURL(videoBlob);
       setGeneratedVideoUrl(url);
       setIsVideoPreviewOpen(true);
-      toast.success(`Video with audio (${videoDuration}s, ${width}×${height} MP4) ready with real animated motion!`);
+      if (animatedVideoBlob) {
+        toast.success(`Video with audio (${videoDuration}s, ${width}×${height} MP4) ready with real animated motion!`);
+      } else {
+        toast.info(`Promo video preview (${videoDuration}s, ${width}×${height} MP4) generated with synchronized voiceover & text.`);
+      }
     } catch (err: any) {
       console.error("AI Video with Audio error:", err);
       toast.error(err.message || "Failed to generate video with audio");
@@ -1138,13 +1177,37 @@ function generateSmartFallbackTemplate(opts: {
         template = `नमस्ते दोस्तों! इस ${occasion} पर ${businessType} की तरफ से ढेर सारी शुभकामनाएं। हमारी प्रीमियम ${item} की रेंज अब खास कीमतों में उपलब्ध है। ${hasDisc ? `पाइये पूरे ${discText} की छूट!` : "उत्कृष्ट क्वालिटी और गारंटीड संतुष्टि!"} आज ही संपर्क करें!`;
       }
     } else if (langCode === "ur") {
-      template = hasDisc
-        ? `اس ${occasion} کے پرمسرت موقع پر ${businessType} لایا ہے اپنے تمام پریمیم ${item} پر فلیٹ ${discText} کی شاندار رعایت! بہترین کوالٹی، خوبصورت ڈیزائن اور زبردست آرام۔ آج ہی تشریف لائیں اور اس زبردست آفر سے فائدہ اٹھائیں۔`
-        : `اس ${occasion} کے موقع پر ${businessType} پیش کرتا ہے پریمیم ${item} کا شاندار نیا کلیکشن۔ بہترین بناوٹ، پائیداری اور لازوال نفاست۔ آج ہی تشریف لائیں یا فوری رابطہ کریں!`;
+      if (videoDuration === 5) {
+        template = hasDisc
+          ? `دھماکے دار ${occasion} آفر! ہمارے پریمیم ${item} پر پائیں ${discText} کی خصوصی رعایت۔ آج ہی تشریف لائیں!`
+          : `شاندار ${occasion} کلیکشن! ہمارے پریمیم ${item} کے ساتھ اپنا نیا انداز اپنائیں۔ آج ہی تشریف لائیں!`;
+      } else if (videoDuration === 15) {
+        template = hasDisc
+          ? `خوش آمدید! اس ${occasion} کے پرمسرت موقع پر ${businessType} لایا ہے اپنے تمام پریمیم ${item} پر فلیٹ ${discText} کی شاندار رعایت! بہترین کوالٹی، دلکش ڈیزائن اور زبردست آرام۔ آج ہی تشریف لائیں اور اس زبردست آفر سے فائدہ اٹھائیں۔`
+          : `خوش آمدید! اس ${occasion} کے موقع پر ${businessType} پیش کرتا ہے پریمیم ${item} کا شاندار نیا کلیکشن۔ بہترین بناوٹ، اعلیٰ پائیداری اور لازوال نفاست۔ آج ہی تشریف لائیں یا فوری رابطہ کریں!`;
+      } else if (videoDuration === 30) {
+        template = hasDisc
+          ? `محترم دوستو! اس ${occasion} اپنے تہوار کو بنائیں اور بھی خاص۔ ${businessType} لے کر آیا ہے پریمیم ${item} کا سب سے نیا اور دلکش کلیکشن، وہ بھی پورے ${discText} کی زبردست بچت کے ساتھ! جدید ترین انداز، مضبوط بناوٹ اور ہر قدم پر لاجواب آرام۔ یہ پیشکش محدود مدت کے لیے ہے، تو دیر نہ کیجئے۔ آج ہی ہمارے قریبی اسٹور پر تشریف لائیں یا واٹس ایپ پر فوری رابطہ کریں!`
+          : `محترم دوستو! اس ${occasion} پر ${businessType} پیش کرتا ہے پریمیم ${item} کا سب سے نیا اور شاندار کلیکشن۔ بے مثال کوالٹی، مضبوط پائیداری اور ہر لمحے میں پرسکون آرام۔ اپنی شخصیت کو دیں ایک نیا اور دلکش نکھار۔ اسٹاک محدود ہے، آج ہی تشریف لائیں یا فوری آن لائن بکنگ کرائیں!`;
+      } else {
+        template = `محترم دوستو! اس ${occasion} کے موقع پر ${businessType} کی طرف سے دلی مبارکباد۔ ہماری پریمیم ${item} کی مکمل رینج اب خصوصی رعایت کے ساتھ دستیاب ہے۔ ${hasDisc ? `پائیں پورے ${discText} کی چھوٹ!` : "اعلیٰ ترین کوالٹی اور پائیداری کی مکمل ضمانت!"} آج ہی تشریف لائیں!`;
+      }
     } else if (langCode === "ar") {
-      template = hasDisc
-        ? `بمناسبة ${occasion} السعيدة، يسر ${businessType} أن يقدم لكم أقوى العروض! خصم يصل إلى ${discText} على تشكيلتنا المميزة من ${item}. جودة استثنائية وتصاميم عصرية فاخرة. زورونا اليوم ولا تفوتوا الفرصة!`
-        : `احتفلوا بـ ${occasion} مع أحدث تشكيلات ${businessType} الفاخرة من ${item}. تصاميم أنيقة تجمع بين الراحة الفائقة والجودة العالية. تفضلوا بزيارتنا اليوم لتكتشفوا التميز!`;
+      if (videoDuration === 5) {
+        template = hasDisc
+          ? `أقوى عروض ${occasion}! احصل على خصم ${discText} على تشكيلتنا المميزة من ${item}. تفضل بزيارتنا اليوم!`
+          : `تشكيلة ${occasion} الحصرية! ارتقِ بأناقتك مع أرقى تصاميم ${item} من ${businessType}. زورونا اليوم!`;
+      } else if (videoDuration === 15) {
+        template = hasDisc
+          ? `أهلاً بكم! بمناسبة ${occasion} السعيدة، يسر ${businessType} أن يقدم لكم أقوى العروض! خصم حصري يصل إلى ${discText} على تشكيلتنا المميزة من ${item}. جودة استثنائية، راحة فائقة وتصاميم عصرية. تفضلوا بزيارتنا اليوم ولا تفوتوا الفرصة!`
+          : `أهلاً بكم! احتفلوا بـ ${occasion} مع أحدث تشكيلات ${businessType} الفاخرة من ${item}. تصاميم أنيقة تجمع بين الراحة الفائقة والجودة العالية. تفضلوا بزيارتنا اليوم لتكتشفوا التميز والفخامة!`;
+      } else if (videoDuration === 30) {
+        template = hasDisc
+          ? `مرحباً بكم جميعاً! اجعلوا احتفالكم بـ ${occasion} أكثر تميزاً مع ${businessType}! نقدم لكم اليوم أحدث تشكيلاتنا الفاخرة من ${item}، مع خصم خاص ومذهل قدره ${discText} لفترة محدودة! خامات متينة، راحة استثنائية وأناقة لا مثيل لها تلبي تطلعاتكم. الكمية محدودة جداً، سارعوا بزيارة معارضنا اليوم أو اطلبوا مباشرة عبر الواتساب!`
+          : `مرحباً بكم جميعاً! بمناسبة ${occasion} المجيدة، تقدم لكم ${businessType} أرقى تصاميم ${item} العصرية. دقة متناهية في التصنيع، أقمشة وأنسجة فاخرة، وراحة مطلقة طوال اليوم تمنحكم ثقة كاملة في كل خطوة. زوروا أقرب فرع إليكم اليوم أو تواصلوا معنا لطلب تشكيلتكم المفضلة!`;
+      } else {
+        template = `أعزاءنا الكرام! يسعدنا في ${businessType} أن نهنئكم بمناسبة ${occasion}. نقدم لكم تشكيلتنا الكاملة من ${item} بأعلى معايير الجودة العالمية. ${hasDisc ? `استمتعوا بخصم ${discText} الرائع!` : "تصاميم راقية وأسعار مميزة!"} تفضلوا بزيارتنا الآن!`;
+      }
     } else {
       if (videoDuration === 5) {
         template = hasDisc
@@ -1305,24 +1368,30 @@ IMAGE_PROMPT:
 
       if (!generatedTemplate) {
         try {
-          const response = await supabase.functions.invoke("generate-template", {
-            body: {
-              type: "marketing_template",
-              businessType: formData.businessType,
-              productCategory: formData.productCategory,
-              discount: formData.discount[0],
-              occasion: formData.occasion,
-              customPrompt: isVideo
-                ? `CRITICAL FORMAT: Create a high-converting ${videoDuration}s promotional marketing VIDEO VOICEOVER SCRIPT and a CINEMATIC VIDEO BACKGROUND FRAME PROMPT.\n${scriptGuidance}${formData.customPrompt ? `\nAdditional Instructions: ${formData.customPrompt}` : ""}`
-                : formData.customPrompt,
-              textProvider: textProvider === "nvidia" ? "gemini" : textProvider,
-              videoDuration,
-              videoAspectRatio,
-              voiceoverLanguage,
-              voiceGender,
-              selectedVoiceId,
-            },
-          });
+          const timeoutPromise = new Promise<{ data: null }>((resolve) =>
+            setTimeout(() => resolve({ data: null }), 8000)
+          );
+          const response = await Promise.race([
+            supabase.functions.invoke("generate-template", {
+              body: {
+                type: "marketing_template",
+                businessType: formData.businessType,
+                productCategory: formData.productCategory,
+                discount: formData.discount[0],
+                occasion: formData.occasion,
+                customPrompt: isVideo
+                  ? `CRITICAL FORMAT: Create a high-converting ${videoDuration}s promotional marketing VIDEO VOICEOVER SCRIPT and a CINEMATIC VIDEO BACKGROUND FRAME PROMPT.\n${scriptGuidance}${formData.customPrompt ? `\nAdditional Instructions: ${formData.customPrompt}` : ""}`
+                  : formData.customPrompt,
+                textProvider: textProvider === "nvidia" ? "gemini" : textProvider,
+                videoDuration,
+                videoAspectRatio,
+                voiceoverLanguage,
+                voiceGender,
+                selectedVoiceId,
+              },
+            }),
+            timeoutPromise,
+          ]);
 
           if (response.data?.template) {
             generatedTemplate = response.data.template;
