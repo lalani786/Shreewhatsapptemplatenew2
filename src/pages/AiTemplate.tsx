@@ -1025,6 +1025,93 @@ CRITICAL RULES:
     }
   };
 
+function generateSmartFallbackTemplate(opts: {
+  businessType: string;
+  productCategory?: string;
+  discount?: number;
+  occasion: string;
+  customPrompt?: string;
+  isVideo: boolean;
+  videoDuration: VideoDuration;
+  aspectRatio: VideoAspectRatio;
+  language: string;
+  gender: "male" | "female";
+}): { template: string; imagePrompt: string } {
+  const { businessType, productCategory, discount, occasion, isVideo, videoDuration, aspectRatio, language, gender } = opts;
+  const item = productCategory || businessType || "products";
+  const hasDisc = discount && discount > 0;
+  const discText = hasDisc ? `${discount}%` : "";
+  const langCode = (language || "hi").split("-")[0].toLowerCase();
+  const aspectConfig = VIDEO_ASPECT_RATIOS[aspectRatio] || VIDEO_ASPECT_RATIOS["9:16"];
+
+  let template = "";
+  if (!isVideo) {
+    template = hasDisc
+      ? `🎉 Special ${occasion} Celebration! 🎉\n\nUpgrade your style with exclusive ${item} from ${businessType}!\n\n✨ Flat ${discText} OFF on our entire premium collection!\n🚚 Express Delivery & Premium Quality Guaranteed.\n\n👉 Contact us now to claim your exclusive offer!`
+      : `✨ Happy ${occasion} from ${businessType}! ✨\n\nDiscover our latest premium collection of ${item}. Crafted for elegance and unparalleled quality.\n\n📍 Visit our store or message us today to explore the collection!`;
+  } else {
+    if (langCode === "gu") {
+      if (videoDuration === 5) {
+        template = hasDisc
+          ? `ધમાકેદાર ${occasion} ઓફર! અમારા પ્રીમિયમ ${item} પર મેળવો ${discText} ની ભારે છૂટ. આજે જ પધારો!`
+          : `ખાસ ${occasion} કલેક્શન! અમારા પ્રીમિયમ ${item} સાથે તમારો અંદાજ બદલો. આજે જ મુલાકાત લો!`;
+      } else if (videoDuration === 15) {
+        template = hasDisc
+          ? `નમસ્તે મિત્રો! આ ${occasion} પર ${businessType} લાવ્યા છે ખાસ ઓફર. અમારા પ્રીમિયમ ${item} પર મેળવો ફ્લેટ ${discText} ની વિશેષ છૂટ. શ્રેષ્ઠ ક્વોલિટી, આરામદાયક સ્ટાઇલ અને લેટેસ્ટ ડિઝાઇન. આજે જ મુલાકાત લો અને ઑફરનો લાભ ઉઠાવો!`
+          : `નમસ્તે મિત્રો! આ ${occasion} પર ${businessType} લાવ્યા છે સુપ્રીમ કલેક્શન. અમારા પ્રીમિયમ ${item} આપે છે બેહતરીન કમ્ફર્ટ અને અદભુત લુક. દરેક પળમાં ચમકો નવા આત્મવિશ્વાસ સાથે. આજે જ મુલાકાત લો અથવા ઓર્ડર કરો!`;
+      } else if (videoDuration === 30) {
+        template = hasDisc
+          ? `નમસ્તે દોસ્તો! આ ${occasion} તમારા માટે કંઈક ખાસ લઈને આવ્યું છે. ${businessType} લાવ્યા છે પ્રીમિયમ ${item} નું સુપરહિટ કલેક્શન, એ પણ ફ્લેટ ${discText} ની ધમાકેદાર છૂટ સાથે! આધુનિક ડિઝાઇન, અતૂટ ટકાઉપણું અને અલ્ટીમેટ કમ્ફર્ટ હવે તમારા બજેટમાં. લિમિટેડ સ્ટોક ઉપલબ્ધ છે, તો મોડું ના કરો. આજે જ અમારા સ્ટોરની મુલાકાત લો અથવા ઓનલાઇન ઓર્ડર બુક કરો અને ઉત્સવનો આનંદ બમણો કરો!`
+          : `નમસ્તે દોસ્તો! આ ${occasion} તમારા માટે લાવ્યું છે નવી ખુશીઓ. ${businessType} પ્રસ્તુત કરે છે પ્રીમિયમ ${item} નું સૌથી નવું કલેક્શન. દરેક ઉત્પાદનમાં ઉત્કૃષ્ટ કારીગરી, શાનદાર ફિનિશિંગ અને લાંબા સમય સુધી ચાલતો આરામ. તમારા વ્યક્તિત્વને આપો એક નવી ઓળખ. સ્ટોક લિમિટેડ છે, તો આજે જ મુલાકાત લો અથવા વોટ્સએપ પર અમારો સંપર્ક કરો!`;
+      } else {
+        template = `નમસ્તે મિત્રો! આ ${occasion} ના પાવન પર્વે ${businessType} તરફથી હાર્દિક શુભેચ્છાઓ. અમે લાવ્યા છીએ અમારા પ્રીમિયમ ${item} ની વિશાળ શ્રેણી. અજોડ ગુણવત્તા, સુંદર ફેશન અને આકર્ષક કિંમત. ${hasDisc ? `ફ્લેટ ${discText} સ્પેશિયલ ડિસ્કાઉન્ટ ઉપલબ્ધ છે!` : "શ્રેષ્ઠ બ્રાન્ડ વેલ્યુ અને ટકાઉપણું!"} આજે જ પધારો!`;
+      }
+    } else if (langCode === "hi") {
+      if (videoDuration === 5) {
+        template = hasDisc
+          ? `धमाकेदार ${occasion} ऑफर! हमारे प्रीमियम ${item} पर पाइये ${discText} की विशेष छूट। आज ही आएं!`
+          : `शानदार ${occasion} कलेक्शन! हमारे प्रीमियम ${item} के साथ अपना स्टाइल अपग्रेड करें। आज ही पधारें!`;
+      } else if (videoDuration === 15) {
+        template = hasDisc
+          ? `नमस्ते दोस्तों! इस ${occasion} के पावन अवसर पर ${businessType} लेकर आया है धमाकेदार ऑफर। हमारे प्रीमियम ${item} पर पाइये फ्लैट ${discText} की भारी छूट। बेहतरीन स्टाइल, अद्वितीय कम्फर्ट और टिकाऊ क्वालिटी। आज ही आएं और अपना मनपसंद कलेक्शन चुनें!`
+          : `नमस्ते दोस्तों! इस ${occasion} पर ${businessType} पेश करता है एक्सक्लूसिव कलेक्शन। हमारे प्रीमियम ${item} देंगे आपको लाजवाब स्टाइल और पूरा कम्फर्ट। हर कदम पर आत्मविश्वास महसूस करें। आज ही स्टोर पर पधारें या तुरंत ऑनलाइन आर्डर करें!`;
+      } else if (videoDuration === 30) {
+        template = hasDisc
+          ? `नमस्ते दोस्तों! इस ${occasion} अपने त्यौहार को बनाएं और भी खास। ${businessType} लेकर आया है प्रीमियम ${item} का सबसे नया और आकर्षक कलेक्शन, वह भी पूरे ${discText} की महा बचत के साथ! आधुनिक स्टाइल, मजबूत बनावट और बेजोड़ कम्फर्ट का बेहतरीन संगम। यह ऑफर केवल सीमित समय के लिए मान्य है, तो देर किस बात की? आज ही हमारे नजदीकी स्टोर पर आएं या दिए गए नंबर पर तुरंत संपर्क करें!`
+          : `नमस्ते दोस्तों! इस ${occasion} के अवसर पर ${businessType} आपके लिए लाया है नए प्रोडक्ट्स की शानदार रेंज। हमारे प्रीमियम ${item} में आपको मिलेगी असली मजबूती, परफेक्ट कम्फर्ट और लेटेस्ट फैशन का बेजोड़ तालमेल। अपनी पर्सनालिटी को दें एक नया निखार। आज ही हमारे स्टोर पर विजिट करें या व्हाट्सएप पर मैसेज करके अपनी बुकिंग पक्की करें!`;
+      } else {
+        template = `नमस्ते दोस्तों! इस ${occasion} पर ${businessType} की तरफ से ढेर सारी शुभकामनाएं। हमारी प्रीमियम ${item} की रेंज अब खास कीमतों में उपलब्ध है। ${hasDisc ? `पाइये पूरे ${discText} की छूट!` : "उत्कृष्ट क्वालिटी और गारंटीड संतुष्टि!"} आज ही संपर्क करें!`;
+      }
+    } else if (langCode === "ur") {
+      template = hasDisc
+        ? `اس ${occasion} کے پرمسرت موقع پر ${businessType} لایا ہے اپنے تمام پریمیم ${item} پر فلیٹ ${discText} کی شاندار رعایت! بہترین کوالٹی، خوبصورت ڈیزائن اور زبردست آرام۔ آج ہی تشریف لائیں اور اس زبردست آفر سے فائدہ اٹھائیں۔`
+        : `اس ${occasion} کے موقع پر ${businessType} پیش کرتا ہے پریمیم ${item} کا شاندار نیا کلیکشن۔ بہترین بناوٹ، پائیداری اور لازوال نفاست۔ آج ہی تشریف لائیں یا فوری رابطہ کریں!`;
+    } else if (langCode === "ar") {
+      template = hasDisc
+        ? `بمناسبة ${occasion} السعيدة، يسر ${businessType} أن يقدم لكم أقوى العروض! خصم يصل إلى ${discText} على تشكيلتنا المميزة من ${item}. جودة استثنائية وتصاميم عصرية فاخرة. زورونا اليوم ولا تفوتوا الفرصة!`
+        : `احتفلوا بـ ${occasion} مع أحدث تشكيلات ${businessType} الفاخرة من ${item}. تصاميم أنيقة تجمع بين الراحة الفائقة والجودة العالية. تفضلوا بزيارتنا اليوم لتكتشفوا التميز!`;
+    } else {
+      if (videoDuration === 5) {
+        template = hasDisc
+          ? `Unstoppable style! Get flat ${discText} off on premium ${item} this ${occasion}. Shop now!`
+          : `Elevate your look with premium ${item} from ${businessType}. Visit us today!`;
+      } else if (videoDuration === 15) {
+        template = hasDisc
+          ? `Celebrate this ${occasion} in style! ${businessType} brings you an exclusive flat ${discText} discount across our entire premium ${item} collection. Unmatched comfort, trendsetting design, and peak durability. Grab yours today before stock runs out!`
+          : `Discover the art of elegance this ${occasion}! ${businessType} presents our brand new premium ${item} line. Designed for maximum comfort and standout sophistication. Upgrade your daily style today!`;
+      } else {
+        template = hasDisc
+          ? `Step up your presence this ${occasion} with ${businessType}! Enjoy up to ${discText} off on our handcrafted premium collection of ${item}. Engineered for luxurious comfort, superior performance, and effortless elegance. Don't wait—visit our store or order online today to claim your limited-time festive deal!`
+          : `Step into pure sophistication this ${occasion} with ${businessType}! Experience our handcrafted premium collection of ${item}, meticulously designed for timeless appeal and supreme durability. Visit our showroom or message us today to explore the collection!`;
+      }
+    }
+  }
+
+  const imagePrompt = `Cinematic 4K promotional commercial video frame featuring ${item} by ${businessType}, ${occasion} visual celebration theme, dramatic studio spotlighting, elegant pedestals, dynamic camera angle, hyper-realistic textures, clean negative space for captions, aspect ratio ${aspectConfig.name}`;
+
+  return { template, imagePrompt };
+}
+
   const handleGenerate = async () => {
     if (!formData.businessType || !formData.occasion) {
       toast.error("Please select business type and occasion");
@@ -1162,36 +1249,53 @@ IMAGE_PROMPT:
       }
 
       if (!generatedTemplate) {
-        const response = await supabase.functions.invoke("generate-template", {
-          body: {
-            type: isVideo ? "video_template" : "marketing_template",
+        try {
+          const response = await supabase.functions.invoke("generate-template", {
+            body: {
+              type: "marketing_template",
+              businessType: formData.businessType,
+              productCategory: formData.productCategory,
+              discount: formData.discount[0],
+              occasion: formData.occasion,
+              customPrompt: isVideo
+                ? `CRITICAL FORMAT: Create a high-converting ${videoDuration}s promotional marketing VIDEO VOICEOVER SCRIPT and a CINEMATIC VIDEO BACKGROUND FRAME PROMPT.\n${scriptGuidance}${formData.customPrompt ? `\nAdditional Instructions: ${formData.customPrompt}` : ""}`
+                : formData.customPrompt,
+              textProvider: textProvider === "nvidia" ? "gemini" : textProvider,
+              videoDuration,
+              videoAspectRatio,
+              voiceoverLanguage,
+              voiceGender,
+              selectedVoiceId,
+            },
+          });
+
+          if (response.data?.template) {
+            generatedTemplate = response.data.template;
+            generatedImagePrompt = response.data.imagePrompt || "";
+          } else if (response.data?.error) {
+            console.warn("generate-template error:", response.data.error);
+          }
+        } catch (edgeCallErr) {
+          console.warn("generate-template network/edge error:", edgeCallErr);
+        }
+
+        // Smart fallback synthesis if the cloud API returned an error or was unavailable
+        if (!generatedTemplate) {
+          const fallback = generateSmartFallbackTemplate({
             businessType: formData.businessType,
             productCategory: formData.productCategory,
             discount: formData.discount[0],
             occasion: formData.occasion,
-            customPrompt: isVideo
-              ? `${formData.customPrompt ? `${formData.customPrompt}\n\n` : ""}${scriptGuidance}`
-              : formData.customPrompt,
-            textProvider: textProvider === "nvidia" ? "gemini" : textProvider,
+            customPrompt: formData.customPrompt,
+            isVideo,
             videoDuration,
-            videoAspectRatio,
-            voiceoverLanguage,
-            voiceGender,
-            selectedVoiceId,
-          },
-        });
-
-        if (response.data?.error) {
-          throw new Error(response.data.error);
+            aspectRatio: videoAspectRatio,
+            language: voiceoverLanguage,
+            gender: voiceGender,
+          });
+          generatedTemplate = fallback.template;
+          generatedImagePrompt = fallback.imagePrompt;
         }
-        if (response.error) throw response.error;
-
-        generatedTemplate = response.data?.template || "";
-        generatedImagePrompt = response.data?.imagePrompt || "";
-      }
-
-      if (!generatedTemplate) {
-        throw new Error("No template script was generated. Please try again.");
       }
 
       setGeneratedContent({
