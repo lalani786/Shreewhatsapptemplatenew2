@@ -140,8 +140,8 @@ const NVIDIA_STANDARD_ENDPOINTS = [
   {
     name: "flux.1-schnell",
     url: "https://ai.api.nvidia.com/v1/genai/black-forest-labs/flux.1-schnell",
-    body: { prompt: "", width: 1024, height: 1024, steps: 4, seed: 0 } as any,
-    buildBody: (p: string) => ({ prompt: p, width: 1024, height: 1024, steps: 4, seed: 0 }),
+    body: { prompt: "", width: 1024, height: 1024, steps: 4 } as any,
+    buildBody: (p: string) => ({ prompt: p, width: 1024, height: 1024, steps: 4 }),
     extract: (d: any) => d?.artifacts?.[0]?.base64 || d?.image,
   },
   {

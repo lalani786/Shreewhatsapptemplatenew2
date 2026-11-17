@@ -50,7 +50,6 @@ const SUPPORTED_MODELS = {
       width: sanitizeDimension(opts?.width, 1024),
       height: sanitizeDimension(opts?.height, 1024),
       steps: Math.min(Math.max(opts?.steps || 25, 1), 50),
-      seed: typeof opts?.seed === "number" && opts.seed >= 0 ? opts.seed : 0,
     }),
   },
   "flux.1-schnell": {
@@ -63,7 +62,6 @@ const SUPPORTED_MODELS = {
       width: sanitizeDimension(opts?.width, 1024),
       height: sanitizeDimension(opts?.height, 1024),
       steps: Math.min(Math.max(opts?.steps || 4, 1), 4),
-      seed: typeof opts?.seed === "number" && opts.seed >= 0 ? opts.seed : 0,
     }),
   },
   "sdxl-turbo": {
