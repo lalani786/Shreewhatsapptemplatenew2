@@ -206,6 +206,7 @@ const occasions = [
 export default function AiTemplate() {
   const navigate = useNavigate();
   const [socialPostOpen, setSocialPostOpen] = useState(false);
+  const [socialPostMediaType, setSocialPostMediaType] = useState<"image" | "video">("image");
   const [contentType, setContentType] = useState<ContentType>("poster");
   const [imageProvider, setImageProvider] = useState<ImageProvider>("auto");
   const [textProvider, setTextProvider] = useState<"lovable_ai" | "gemini" | "nvidia">("gemini");
@@ -2097,7 +2098,10 @@ IMAGE_PROMPT:
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={() => setSocialPostOpen(true)}
+                      onClick={() => {
+                        setSocialPostMediaType(contentType === "video" && generatedVideoUrl ? "video" : "image");
+                        setSocialPostOpen(true);
+                      }}
                       className="flex items-center gap-1.5 text-xs h-8 border-primary/40 text-primary hover:bg-primary/10 shadow-sm"
                     >
                       <Share2 className="h-3.5 w-3.5" />
@@ -2586,7 +2590,10 @@ IMAGE_PROMPT:
                       <Button
                         size="sm"
                         className="flex-1 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white font-medium shadow-sm"
-                        onClick={() => setSocialPostOpen(true)}
+                        onClick={() => {
+                          setSocialPostMediaType("image");
+                          setSocialPostOpen(true);
+                        }}
                       >
                         <Share2 className="mr-1.5 h-3.5 w-3.5" />
                         Post to Social Media
@@ -2682,7 +2689,10 @@ IMAGE_PROMPT:
                             <Button
                               size="sm"
                               className="flex-1 text-xs bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white font-medium"
-                              onClick={() => setSocialPostOpen(true)}
+                              onClick={() => {
+                                setSocialPostMediaType("video");
+                                setSocialPostOpen(true);
+                              }}
                             >
                               <Share2 className="h-3.5 w-3.5 mr-1" />
                               Post to Social Media
@@ -2711,7 +2721,10 @@ IMAGE_PROMPT:
               <CardContent className="space-y-3">
                 <div className="flex flex-col sm:flex-row items-center gap-2.5">
                   <Button
-                    onClick={() => setSocialPostOpen(true)}
+                    onClick={() => {
+                      setSocialPostMediaType(contentType === "video" && generatedVideoUrl ? "video" : "image");
+                      setSocialPostOpen(true);
+                    }}
                     className="w-full sm:flex-1 bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:from-blue-700 hover:via-indigo-700 hover:to-purple-700 text-white shadow-md font-medium"
                   >
                     <Send className="mr-2 h-4 w-4" />
@@ -2719,14 +2732,20 @@ IMAGE_PROMPT:
                   </Button>
                   <Button
                     variant="outline"
-                    onClick={() =>
+                    onClick={() => {
+                      const activeType = (contentType === "video" && generatedVideoUrl) ? "video" : "image";
+                      const activeMedia = activeType === "video" ? generatedVideoUrl : (generatedContent.generatedImage || null);
                       navigate("/social-media", {
                         state: {
                           content: generatedContent.template,
-                          mediaUrl: generatedContent.generatedImage || null,
+                          mediaUrl: activeMedia,
+                          imageUrl: generatedContent.generatedImage || null,
+                          videoUrl: generatedVideoUrl || null,
+                          mediaType: activeType,
+                          selectedMediaType: activeType,
                         },
-                      })
-                    }
+                      });
+                    }}
                     className="w-full sm:w-auto flex items-center gap-1.5"
                   >
                     <ExternalLink className="h-4 w-4" />
@@ -2781,6 +2800,8 @@ IMAGE_PROMPT:
         onOpenChange={setSocialPostOpen}
         initialContent={generatedContent.template}
         initialImageUrl={generatedContent.generatedImage}
+        initialVideoUrl={generatedVideoUrl || undefined}
+        initialMediaType={socialPostMediaType}
         templateName={templateName || formData.occasion || "Marketing Template"}
       />
 
@@ -2831,6 +2852,7 @@ IMAGE_PROMPT:
                 className="flex-1 text-xs bg-gradient-to-r from-blue-600 to-indigo-600 text-white"
                 onClick={() => {
                   setIsVideoPreviewOpen(false);
+                  setSocialPostMediaType("video");
                   setSocialPostOpen(true);
                 }}
               >

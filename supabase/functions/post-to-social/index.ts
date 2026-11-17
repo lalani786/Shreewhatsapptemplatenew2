@@ -24,7 +24,7 @@ function isHttpUrl(value: string | null | undefined): value is string {
 async function uploadDataUrlToStorage(supabase: any, dataUrl: string, userId: string): Promise<string> {
   const matches = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
   if (!matches) {
-    throw new Error("Invalid generated image format");
+    throw new Error("Invalid generated media format");
   }
 
   const mimeType = matches[1];
@@ -36,7 +36,17 @@ async function uploadDataUrlToStorage(supabase: any, dataUrl: string, userId: st
     bytes[index] = binaryString.charCodeAt(index);
   }
 
-  const extension = mimeType.split("/")[1] || "png";
+  const extMap: Record<string, string> = {
+    "video/mp4": "mp4",
+    "video/webm": "webm",
+    "video/quicktime": "mov",
+    "image/jpeg": "jpg",
+    "image/jpg": "jpg",
+    "image/png": "png",
+    "image/webp": "webp",
+    "image/gif": "gif",
+  };
+  const extension = extMap[mimeType] || mimeType.split("/")[1] || "png";
   const fileName = `${userId}/social/${Date.now()}_${crypto.randomUUID()}.${extension}`;
   const { data, error } = await supabase.storage
     .from("whatsapp-media")
@@ -46,7 +56,7 @@ async function uploadDataUrlToStorage(supabase: any, dataUrl: string, userId: st
     });
 
   if (error) {
-    throw new Error(`Failed to upload generated image: ${error.message}`);
+    throw new Error(`Failed to upload media: ${error.message}`);
   }
 
   const { data: publicUrlData } = supabase.storage
@@ -63,7 +73,7 @@ async function normalizeMediaUrl(supabase: any, mediaUrl: string | null, userId:
     return await uploadDataUrlToStorage(supabase, mediaUrl, userId);
   }
 
-  throw new Error("Media must be a public image URL or generated image data");
+  throw new Error("Media must be a public media URL or generated data URL");
 }
 
 function getInstagramToken(credentials: any): string | null {
@@ -572,8 +582,11 @@ async function scheduleYouTubePost(supabase: any, userId: string, scheduledFor: 
   return true;
 }
 
-async function postToYouTube(content: string, mediaUrl: string | null, credentials: any, supabase: any, userId: string): Promise<PostResult> {
+async function postToYouTube(content: string, mediaUrl: string | null, credentials: any, supabase: any, userId: string, mediaType?: string | null): Promise<PostResult> {
   try {
+    if (mediaType === "image") {
+      return { platform: "youtube", success: false, error: "YouTube only supports video uploads (images not supported)" };
+    }
     if (!mediaUrl) {
       return { platform: "youtube", success: false, error: "YouTube requires a video file to upload" };
     }
@@ -659,7 +672,7 @@ serve(async (req) => {
       });
     }
 
-    const { platforms, content, mediaUrl } = await req.json();
+    const { platforms, content, mediaUrl, mediaType } = await req.json();
     if (!Array.isArray(platforms) || platforms.length === 0 || typeof content !== "string" || !content.trim()) {
       return new Response(JSON.stringify({ error: "Invalid request payload" }), {
         status: 400,
@@ -701,7 +714,7 @@ serve(async (req) => {
           result = await postToX(trimmedContent, normalizedMediaUrl, credentials || {});
           break;
         case "youtube":
-          result = await postToYouTube(trimmedContent, normalizedMediaUrl, credentials || {}, supabase, user.id);
+          result = await postToYouTube(trimmedContent, normalizedMediaUrl, credentials || {}, supabase, user.id, mediaType);
           break;
         case "linkedin":
           result = await postToLinkedIn(trimmedContent, normalizedMediaUrl, credentials || {});

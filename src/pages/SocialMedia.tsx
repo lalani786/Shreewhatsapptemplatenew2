@@ -225,6 +225,9 @@ export default function SocialMedia() {
   const [mediaUrl, setMediaUrl] = useState<string | null>(null);
   const [mediaFile, setMediaFile] = useState<File | null>(null);
   const [mediaPreview, setMediaPreview] = useState<string | null>(null);
+  const [mediaType, setMediaType] = useState<"image" | "video" | null>(null);
+  const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [isPosting, setIsPosting] = useState(false);
   const [isGeneratingImage, setIsGeneratingImage] = useState(false);
   const [imagePrompt, setImagePrompt] = useState("");
@@ -820,11 +823,28 @@ export default function SocialMedia() {
 
   useEffect(() => {
     if (location.state) {
-      const state = location.state as { content?: string; mediaUrl?: string | null; platforms?: string[] };
+      const state = location.state as {
+        content?: string;
+        mediaUrl?: string | null;
+        imageUrl?: string | null;
+        videoUrl?: string | null;
+        mediaType?: "image" | "video" | null;
+        selectedMediaType?: "image" | "video" | null;
+        platforms?: string[];
+      };
       if (state.content) setPostContent(state.content);
-      if (state.mediaUrl) {
-        setMediaUrl(state.mediaUrl);
-        setMediaPreview(state.mediaUrl);
+
+      const resolvedType: "image" | "video" | null =
+        state.selectedMediaType || state.mediaType || (state.videoUrl ? "video" : (state.imageUrl ? "image" : null));
+      const activeUrl = resolvedType === "video" ? (state.videoUrl || state.mediaUrl) : (state.imageUrl || state.mediaUrl);
+
+      if (state.imageUrl) setImageUrl(state.imageUrl);
+      if (state.videoUrl) setVideoUrl(state.videoUrl);
+      if (resolvedType) setMediaType(resolvedType);
+
+      if (activeUrl) {
+        setMediaUrl(activeUrl);
+        setMediaPreview(activeUrl);
       }
       if (state.platforms && state.platforms.length > 0) {
         setSelectedPlatforms(state.platforms);
@@ -1354,7 +1374,9 @@ export default function SocialMedia() {
   const isVideoFile = (file: File | null) => file?.type?.startsWith("video/");
   const isVideoUrl = (url: string | null) => {
     if (!url) return false;
-    return /\.(mp4|mov|avi|webm|mkv)(\?|$)/i.test(url);
+    if (mediaType === "video") return true;
+    if (mediaType === "image") return false;
+    return /\.(mp4|mov|avi|webm|mkv)(\?|$)/i.test(url) || url.startsWith("data:video/");
   };
 
   // Normalize MIME type by stripping parameters (e.g. "video/webm;codecs=vp9,opus" -> "video/webm")
@@ -2264,21 +2286,21 @@ export default function SocialMedia() {
     const activeUrl = overrideUrl !== undefined ? overrideUrl : mediaUrl;
 
     if (!activeFile && !activeUrl) return null;
-    if (activeUrl && /^https?:\/\//i.test(activeUrl) && !activeFile) return activeUrl;
+    if (activeUrl && /^https?:\/\//i.test(activeUrl) && !activeFile && !activeUrl.includes("blob:")) return activeUrl;
 
     let uploadBody: File | Blob;
-    let contentType = activeFile?.type || "image/png";
+    let contentType = activeFile?.type || (mediaType === "video" ? "video/mp4" : "image/png");
 
     if (activeFile) {
       uploadBody = activeFile;
-    } else if (activeUrl?.startsWith("data:")) {
+    } else if (activeUrl?.startsWith("data:") || activeUrl?.startsWith("blob:")) {
       const response = await fetch(activeUrl);
       const generatedBlob = await response.blob();
 
       uploadBody = generatedBlob;
-      contentType = generatedBlob.type || contentType;
+      contentType = generatedBlob.type || (mediaType === "video" ? "video/mp4" : contentType);
     } else {
-      throw new Error("Unsupported media format. Please use an uploaded file or generated image.");
+      throw new Error("Unsupported media format. Please use an uploaded file or generated image/video.");
     }
 
     if (uploadBody.size > MAX_UPLOAD_BYTES) {
@@ -2302,7 +2324,7 @@ export default function SocialMedia() {
       "video/mp4": "mp4",
       "video/quicktime": "mov",
     };
-    const fileExt = extMap[baseType] || "webm";
+    const fileExt = extMap[baseType] || (mediaType === "video" ? "mp4" : "png");
 
     const fileName = `${userId}/social/${Date.now()}_${Math.random().toString(36).substring(2, 10)}.${fileExt}`;
 
@@ -2311,7 +2333,6 @@ export default function SocialMedia() {
       .upload(fileName, uploadBody, { contentType: baseType, upsert: false });
 
     if (error) throw new Error("Failed to upload media: " + error.message);
-
 
     const { data: urlData } = supabase.storage
       .from("whatsapp-media")
@@ -2349,6 +2370,15 @@ export default function SocialMedia() {
       // Auto-detect WebM video and transcode to MP4 when Instagram is selected
       let fileToPost = mediaFile;
       let urlToPost = mediaUrl;
+
+      // Validate YouTube video requirement upfront
+      const isCandidateVideo = isVideoFile(fileToPost) || mediaType === "video" || isVideoUrl(urlToPost || mediaPreview);
+      if (includesYouTube && !isCandidateVideo) {
+        toast.error("YouTube only supports video uploads. Please select Video Post or uncheck YouTube.");
+        setIsPosting(false);
+        setYoutubeUpload({ status: "error", message: "YouTube only supports video uploads" });
+        return;
+      }
 
       const isWebM = await isWebMVideo(fileToPost || urlToPost);
       const isTargetingInstagram = selectedPlatforms.includes("instagram");
@@ -2390,7 +2420,7 @@ export default function SocialMedia() {
       }
 
       // Determine media type
-      const hasVideo = isVideoFile(fileToPost) || isVideoUrl(uploadedMediaUrl);
+      const hasVideo = isVideoFile(fileToPost) || (mediaType === "video") || isVideoUrl(uploadedMediaUrl);
       const detectedMediaType = uploadedMediaUrl ? (hasVideo ? "video" : "image") : null;
 
       // Create post records for each platform
@@ -2416,6 +2446,7 @@ export default function SocialMedia() {
           platforms: selectedPlatforms,
           content: postContent.trim(),
           mediaUrl: uploadedMediaUrl,
+          mediaType: detectedMediaType,
         },
       });
 
@@ -2973,10 +3004,43 @@ export default function SocialMedia() {
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-3">
+                  {imageUrl && videoUrl && (
+                    <div className="grid grid-cols-2 gap-1.5 p-1 bg-muted/60 rounded-lg">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant={mediaType === "image" ? "default" : "outline"}
+                        className="text-xs h-7 font-medium"
+                        onClick={() => {
+                          setMediaType("image");
+                          setMediaUrl(imageUrl);
+                          setMediaPreview(imageUrl);
+                          setMediaFile(null);
+                        }}
+                      >
+                        Image Post
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant={mediaType === "video" ? "default" : "outline"}
+                        className="text-xs h-7 font-medium"
+                        onClick={() => {
+                          setMediaType("video");
+                          setMediaUrl(videoUrl);
+                          setMediaPreview(videoUrl);
+                          setMediaFile(null);
+                        }}
+                      >
+                        Video Post (MP4)
+                      </Button>
+                    </div>
+                  )}
+
                   {mediaPreview ? (
                     <div className="space-y-2">
                       <div className="relative">
-                        {isVideoFile(mediaFile) || (mediaPreview && !mediaPreview.startsWith("data:image") && isVideoUrl(mediaPreview)) ? (
+                        {(isVideoFile(mediaFile) || mediaType === "video" || (mediaPreview && !mediaPreview.startsWith("data:image") && isVideoUrl(mediaPreview))) ? (
                           <video
                             src={mediaPreview}
                             controls
@@ -2990,7 +3054,7 @@ export default function SocialMedia() {
                           />
                         )}
                         <div className="absolute top-2 right-2 flex items-center gap-1.5 flex-wrap justify-end">
-                          {(isVideoFile(mediaFile) || (mediaPreview && !mediaPreview.startsWith("data:image") && isVideoUrl(mediaPreview))) && (
+                          {(isVideoFile(mediaFile) || mediaType === "video" || (mediaPreview && !mediaPreview.startsWith("data:image") && isVideoUrl(mediaPreview))) && (
                             <>
                               <Button
                                 type="button"
@@ -3037,6 +3101,7 @@ export default function SocialMedia() {
                               setMediaPreview(null);
                               setMediaFile(null);
                               setMediaUrl(null);
+                              setMediaType(null);
                             }}
                           >
                             Remove
@@ -3044,7 +3109,7 @@ export default function SocialMedia() {
                         </div>
                       </div>
 
-                      {(isVideoFile(mediaFile) || (mediaPreview && !mediaPreview.startsWith("data:image") && isVideoUrl(mediaPreview))) && (
+                      {(isVideoFile(mediaFile) || mediaType === "video" || (mediaPreview && !mediaPreview.startsWith("data:image") && isVideoUrl(mediaPreview))) && (
                         <div className="flex items-center justify-between gap-2 rounded-md border border-primary/20 bg-primary/5 p-2 text-xs">
                           <div className="flex items-center gap-1.5 min-w-0">
                             <Film className="h-4 w-4 text-primary shrink-0" />

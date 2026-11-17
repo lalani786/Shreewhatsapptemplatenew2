@@ -10,7 +10,6 @@ import {
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
-import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -29,14 +28,20 @@ import {
   AlertCircle,
   Sparkles,
   Image as ImageIcon,
+  Video as VideoIcon,
   Check,
+  Film,
 } from "lucide-react";
+
+export type PostMediaType = "image" | "video";
 
 interface DirectSocialPostDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   initialContent?: string;
   initialImageUrl?: string;
+  initialVideoUrl?: string;
+  initialMediaType?: PostMediaType;
   templateName?: string;
 }
 
@@ -47,6 +52,8 @@ const SOCIAL_PLATFORMS = [
     icon: Instagram,
     badgeClass: "bg-gradient-to-r from-purple-500 via-pink-500 to-rose-500 text-white border-transparent",
     maxChars: 2200,
+    supportsVideo: true,
+    supportsImage: true,
   },
   {
     id: "facebook",
@@ -54,13 +61,17 @@ const SOCIAL_PLATFORMS = [
     icon: Facebook,
     badgeClass: "bg-blue-600 text-white border-transparent",
     maxChars: 63206,
+    supportsVideo: true,
+    supportsImage: true,
   },
   {
-    id: "linkedin",
-    label: "LinkedIn",
-    icon: Linkedin,
-    badgeClass: "bg-blue-700 text-white border-transparent",
-    maxChars: 3000,
+    id: "youtube",
+    label: "YouTube Community / Video",
+    icon: Youtube,
+    badgeClass: "bg-red-600 text-white border-transparent",
+    maxChars: 5000,
+    supportsVideo: true,
+    supportsImage: false, // YouTube only supports video
   },
   {
     id: "x",
@@ -68,13 +79,17 @@ const SOCIAL_PLATFORMS = [
     icon: Twitter,
     badgeClass: "bg-neutral-900 text-white dark:bg-neutral-100 dark:text-neutral-900 border-transparent",
     maxChars: 280,
+    supportsVideo: true,
+    supportsImage: true,
   },
   {
-    id: "youtube",
-    label: "YouTube Community",
-    icon: Youtube,
-    badgeClass: "bg-red-600 text-white border-transparent",
-    maxChars: 5000,
+    id: "linkedin",
+    label: "LinkedIn",
+    icon: Linkedin,
+    badgeClass: "bg-blue-700 text-white border-transparent",
+    maxChars: 3000,
+    supportsVideo: true,
+    supportsImage: true,
   },
 ];
 
@@ -83,22 +98,48 @@ export default function DirectSocialPostDialog({
   onOpenChange,
   initialContent = "",
   initialImageUrl = "",
+  initialVideoUrl = "",
+  initialMediaType = "image",
   templateName,
 }: DirectSocialPostDialogProps) {
   const navigate = useNavigate();
   const [content, setContent] = useState(initialContent);
   const [selectedPlatforms, setSelectedPlatforms] = useState<string[]>(["instagram", "facebook"]);
-  const [includeImage, setIncludeImage] = useState(Boolean(initialImageUrl));
+  const [selectedMediaType, setSelectedMediaType] = useState<PostMediaType>("image");
+  const [includeMedia, setIncludeMedia] = useState(true);
   const [isPosting, setIsPosting] = useState(false);
   const [configuredPlatforms, setConfiguredPlatforms] = useState<Record<string, boolean>>({});
+
+  const hasImage = Boolean(initialImageUrl && initialImageUrl.trim());
+  const hasVideo = Boolean(initialVideoUrl && initialVideoUrl.trim());
 
   useEffect(() => {
     if (open) {
       setContent(initialContent);
-      setIncludeImage(Boolean(initialImageUrl));
+
+      // Determine initial active media type based on available media and clicked action
+      if (initialMediaType === "video" && hasVideo) {
+        setSelectedMediaType("video");
+        setIncludeMedia(true);
+      } else if (initialMediaType === "image" && hasImage) {
+        setSelectedMediaType("image");
+        setIncludeMedia(true);
+      } else if (hasVideo && !hasImage) {
+        setSelectedMediaType("video");
+        setIncludeMedia(true);
+      } else if (hasImage && !hasVideo) {
+        setSelectedMediaType("image");
+        setIncludeMedia(true);
+      } else if (hasVideo && hasImage) {
+        setSelectedMediaType(initialMediaType || "video");
+        setIncludeMedia(true);
+      } else {
+        setIncludeMedia(false);
+      }
+
       checkConfiguredCredentials();
     }
-  }, [open, initialContent, initialImageUrl]);
+  }, [open, initialContent, initialImageUrl, initialVideoUrl, initialMediaType, hasImage, hasVideo]);
 
   const checkConfiguredCredentials = async () => {
     try {
@@ -126,6 +167,9 @@ export default function DirectSocialPostDialog({
   };
 
   const togglePlatform = (id: string) => {
+    if (id === "youtube" && includeMedia && selectedMediaType === "image") {
+      toast.info("YouTube only supports video uploads. Switch to 'Video Post' above to publish to YouTube.");
+    }
     setSelectedPlatforms((prev) =>
       prev.includes(id) ? prev.filter((p) => p !== id) : [...prev, id],
     );
@@ -139,32 +183,68 @@ export default function DirectSocialPostDialog({
     setSelectedPlatforms([]);
   };
 
-  const uploadBase64Image = async (dataUrl: string, userId: string): Promise<string> => {
-    const matches = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
-    if (!matches) throw new Error("Invalid base64 image data");
-
-    const mimeType = matches[1];
-    const base64Content = matches[2];
-    const binary = atob(base64Content);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) {
-      bytes[i] = binary.charCodeAt(i);
+  /**
+   * Uploads base64 or blob media to Supabase storage with correct MIME type and extension.
+   * If upload fails, throws an error and NEVER silently falls back to another media type.
+   */
+  const uploadMediaToStorage = async (
+    sourceUrl: string,
+    mediaKind: PostMediaType,
+    userId: string
+  ): Promise<string> => {
+    // If it's already an absolute public HTTP URL, use it directly
+    if (sourceUrl.startsWith("https://") || sourceUrl.startsWith("http://")) {
+      return sourceUrl;
     }
 
-    const ext = mimeType.split("/")[1] || "png";
-    const fileName = `${userId}/social/${Date.now()}_${Math.random().toString(36).slice(2, 9)}.${ext}`;
+    try {
+      let blob: Blob;
+      if (sourceUrl.startsWith("data:")) {
+        const matches = sourceUrl.match(/^data:([^;]+);base64,(.+)$/);
+        if (!matches) throw new Error("Invalid base64 media data");
+        const mimeType = matches[1];
+        const base64Content = matches[2];
+        const binary = atob(base64Content);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) {
+          bytes[i] = binary.charCodeAt(i);
+        }
+        blob = new Blob([bytes], { type: mimeType });
+      } else {
+        const res = await fetch(sourceUrl);
+        if (!res.ok) throw new Error(`Could not read local media blob (HTTP ${res.status})`);
+        blob = await res.blob();
+      }
 
-    const { error: uploadError } = await supabase.storage
-      .from("whatsapp-media")
-      .upload(fileName, bytes, { contentType: mimeType, upsert: false });
+      const isVideo = mediaKind === "video" || blob.type.startsWith("video/");
+      const ext = isVideo ? "mp4" : blob.type.includes("jpeg") ? "jpg" : "png";
+      const contentType = isVideo ? "video/mp4" : blob.type || "image/png";
+      const fileName = `${userId}/social/${mediaKind}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
 
-    if (uploadError) throw uploadError;
+      const { error: uploadError } = await supabase.storage
+        .from("whatsapp-media")
+        .upload(fileName, blob, {
+          contentType,
+          upsert: false,
+        });
 
-    const { data: publicUrlData } = supabase.storage
-      .from("whatsapp-media")
-      .getPublicUrl(fileName);
+      if (uploadError) {
+        throw new Error(`Upload error: ${uploadError.message}`);
+      }
 
-    return publicUrlData.publicUrl;
+      const { data: publicUrlData } = supabase.storage
+        .from("whatsapp-media")
+        .getPublicUrl(fileName);
+
+      if (!publicUrlData?.publicUrl) {
+        throw new Error("Could not retrieve public URL for uploaded media file");
+      }
+
+      return publicUrlData.publicUrl;
+    } catch (err: any) {
+      console.error(`Error uploading ${mediaKind} to storage:`, err);
+      throw new Error(`Failed to upload ${mediaKind} to cloud storage: ${err.message || String(err)}`);
+    }
   };
 
   const handleDirectPost = async () => {
@@ -174,6 +254,12 @@ export default function DirectSocialPostDialog({
     }
     if (selectedPlatforms.length === 0) {
       toast.error("Please select at least one social media platform");
+      return;
+    }
+
+    // Platform validation: YouTube requires video
+    if (selectedPlatforms.includes("youtube") && (!includeMedia || selectedMediaType !== "video")) {
+      toast.error("YouTube only supports video uploads. Please switch to Video Post or uncheck YouTube.");
       return;
     }
 
@@ -187,13 +273,16 @@ export default function DirectSocialPostDialog({
       }
 
       let uploadedMediaUrl: string | null = null;
-      if (includeImage && initialImageUrl) {
-        if (initialImageUrl.startsWith("data:")) {
-          toast.info("Uploading image to storage...");
-          uploadedMediaUrl = await uploadBase64Image(initialImageUrl, user.id);
-        } else {
-          uploadedMediaUrl = initialImageUrl;
+      const activeMediaType = includeMedia ? selectedMediaType : null;
+
+      if (includeMedia) {
+        const sourceToUpload = selectedMediaType === "video" ? initialVideoUrl : initialImageUrl;
+        if (!sourceToUpload) {
+          throw new Error(`No ${selectedMediaType} source available to upload`);
         }
+
+        toast.info(`Uploading ${selectedMediaType === "video" ? "MP4 video" : "image"} to cloud storage...`);
+        uploadedMediaUrl = await uploadMediaToStorage(sourceToUpload, selectedMediaType, user.id);
       }
 
       // 1. Insert records into social_media_posts
@@ -202,8 +291,8 @@ export default function DirectSocialPostDialog({
         platform,
         content: content.trim(),
         media_url: uploadedMediaUrl,
-        media_type: uploadedMediaUrl ? "image" : null,
-        post_type: uploadedMediaUrl ? "image" : "text",
+        media_type: activeMediaType,
+        post_type: activeMediaType || "text",
         status: "pending",
       }));
 
@@ -219,6 +308,7 @@ export default function DirectSocialPostDialog({
           platforms: selectedPlatforms,
           content: content.trim(),
           mediaUrl: uploadedMediaUrl,
+          mediaType: activeMediaType,
         },
       });
 
@@ -233,7 +323,9 @@ export default function DirectSocialPostDialog({
         const failed = data.results.filter((r: any) => !r.success).length;
 
         if (failed === 0) {
-          toast.success(`Published to ${succeeded} platform${succeeded > 1 ? "s" : ""} successfully!`);
+          toast.success(
+            `Published ${activeMediaType === "video" ? "Video" : "Post"} to ${succeeded} platform${succeeded > 1 ? "s" : ""} successfully!`
+          );
           onOpenChange(false);
         } else if (succeeded > 0) {
           toast.warning(`Published to ${succeeded} platform(s), ${failed} failed. Check API Setup credentials.`);
@@ -256,16 +348,25 @@ export default function DirectSocialPostDialog({
 
   const handleOpenInStudio = () => {
     onOpenChange(false);
+    const mediaUrlToPass = includeMedia
+      ? (selectedMediaType === "video" ? initialVideoUrl : initialImageUrl)
+      : null;
+
     navigate("/social-media", {
       state: {
         content,
-        mediaUrl: includeImage ? initialImageUrl : null,
+        mediaUrl: mediaUrlToPass || null,
+        imageUrl: initialImageUrl || null,
+        videoUrl: initialVideoUrl || null,
+        mediaType: includeMedia ? selectedMediaType : null,
+        selectedMediaType: includeMedia ? selectedMediaType : null,
         platforms: selectedPlatforms,
       },
     });
   };
 
   const exceedsTwitterLimit = selectedPlatforms.includes("x") && content.length > 280;
+  const youtubeWarning = selectedPlatforms.includes("youtube") && (!includeMedia || selectedMediaType !== "video");
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -276,11 +377,129 @@ export default function DirectSocialPostDialog({
             Direct Social Media Post
           </DialogTitle>
           <DialogDescription>
-            Publish your AI-generated marketing copy and visual directly to your social platforms.
+            Publish your AI-generated marketing copy, visual poster, or animated promotional video directly to social platforms.
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-5 py-2">
+          {/* Media Selection Options (Image Post vs Video Post) */}
+          {(hasImage || hasVideo) && (
+            <div className="rounded-lg border p-3.5 bg-muted/30 space-y-3">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                <div className="space-y-0.5">
+                  <Label className="text-sm font-semibold flex items-center gap-1.5">
+                    {selectedMediaType === "video" ? (
+                      <VideoIcon className="h-4 w-4 text-purple-600" />
+                    ) : (
+                      <ImageIcon className="h-4 w-4 text-blue-600" />
+                    )}
+                    Select Post Media Type
+                  </Label>
+                  <p className="text-[11px] text-muted-foreground">
+                    Choose whether to post the AI poster image or the animated video
+                  </p>
+                </div>
+
+                {/* Two Clear Options: Image Post and Video Post */}
+                <div className="flex items-center gap-1.5 p-1 bg-background rounded-lg border shadow-sm">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!hasImage) {
+                        toast.info("No poster image generated yet. Generate a poster frame first.");
+                        return;
+                      }
+                      setSelectedMediaType("image");
+                      setIncludeMedia(true);
+                    }}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
+                      selectedMediaType === "image" && includeMedia
+                        ? "bg-blue-600 text-white shadow-sm font-semibold"
+                        : "text-muted-foreground hover:text-foreground"
+                    } ${!hasImage ? "opacity-50 cursor-not-allowed" : ""}`}
+                  >
+                    <ImageIcon className="h-3.5 w-3.5" />
+                    Image Post
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!hasVideo) {
+                        toast.info("No video generated yet. Generate a promo video first.");
+                        return;
+                      }
+                      setSelectedMediaType("video");
+                      setIncludeMedia(true);
+                    }}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
+                      selectedMediaType === "video" && includeMedia
+                        ? "bg-purple-600 text-white shadow-sm font-semibold"
+                        : "text-muted-foreground hover:text-foreground"
+                    } ${!hasVideo ? "opacity-50 cursor-not-allowed" : ""}`}
+                  >
+                    <VideoIcon className="h-3.5 w-3.5" />
+                    Video Post (MP4)
+                  </button>
+                </div>
+              </div>
+
+              {/* Attach Media Switch */}
+              <div className="flex items-center justify-between pt-1 border-t border-border/50">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-muted-foreground">
+                    Attach media to post ({selectedMediaType === "video" ? "MP4 Video" : "Poster Image"})
+                  </span>
+                </div>
+                <Switch
+                  id="include-media"
+                  checked={includeMedia}
+                  onCheckedChange={setIncludeMedia}
+                />
+              </div>
+
+              {/* Media Preview Area */}
+              {includeMedia && (
+                <div className="pt-2">
+                  {selectedMediaType === "video" && hasVideo ? (
+                    <div className="space-y-2">
+                      <div className="overflow-hidden rounded-md border bg-black flex items-center justify-center max-h-56">
+                        <video
+                          src={initialVideoUrl}
+                          controls
+                          playsInline
+                          className="max-h-56 w-full object-contain"
+                        />
+                      </div>
+                      <div className="flex items-center justify-between text-xs text-muted-foreground">
+                        <span className="flex items-center gap-1 text-purple-600 dark:text-purple-400 font-medium">
+                          <Film className="h-3.5 w-3.5" />
+                          Animated MP4 Video Attached
+                        </span>
+                        <span>Compatible with Instagram Reels, Facebook, YouTube, X</span>
+                      </div>
+                    </div>
+                  ) : selectedMediaType === "image" && hasImage ? (
+                    <div className="flex items-center gap-3">
+                      <img
+                        src={initialImageUrl}
+                        alt="Post preview"
+                        className="h-24 w-24 rounded-md object-cover border shadow-sm shrink-0"
+                      />
+                      <div className="text-xs text-muted-foreground space-y-1">
+                        <div className="font-medium text-foreground flex items-center gap-1 text-blue-600 dark:text-blue-400">
+                          <Sparkles className="h-3.5 w-3.5" />
+                          High-Definition AI Poster Attached
+                        </div>
+                        <p>Will be published as an image post to supported social networks.</p>
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Platforms Picker */}
           <div className="space-y-2">
             <div className="flex items-center justify-between">
@@ -305,9 +524,10 @@ export default function DirectSocialPostDialog({
             </div>
 
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
-              {SOCIAL_PLATFORMS.map(({ id, label, icon: Icon, badgeClass }) => {
+              {SOCIAL_PLATFORMS.map(({ id, label, icon: Icon, badgeClass, supportsImage }) => {
                 const isSelected = selectedPlatforms.includes(id);
                 const isConfigured = configuredPlatforms[id];
+                const isYouTubeImageMismatch = id === "youtube" && includeMedia && selectedMediaType === "image";
 
                 return (
                   <button
@@ -326,8 +546,11 @@ export default function DirectSocialPostDialog({
                       <Icon className="h-4 w-4" />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <div className="text-xs font-semibold leading-tight truncate">
+                      <div className="text-xs font-semibold leading-tight truncate flex items-center gap-1">
                         {label}
+                        {!supportsImage && (
+                          <span className="text-[9px] text-red-500 font-normal">Video only</span>
+                        )}
                       </div>
                       <div className="text-[10px] text-muted-foreground flex items-center gap-1 mt-0.5">
                         {isConfigured ? (
@@ -346,6 +569,13 @@ export default function DirectSocialPostDialog({
                 );
               })}
             </div>
+
+            {youtubeWarning && (
+              <p className="text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1.5 pt-1">
+                <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+                YouTube only supports video uploads. Switch to "Video Post" above to upload your video to YouTube.
+              </p>
+            )}
           </div>
 
           {/* Post Caption / Content */}
@@ -370,7 +600,7 @@ export default function DirectSocialPostDialog({
               id="post-content"
               value={content}
               onChange={(e) => setContent(e.target.value)}
-              rows={6}
+              rows={5}
               placeholder="Write your post caption..."
               className="resize-y font-sans text-sm"
             />
@@ -382,46 +612,6 @@ export default function DirectSocialPostDialog({
               </p>
             )}
           </div>
-
-          {/* Media Attachment */}
-          {initialImageUrl ? (
-            <div className="rounded-lg border p-3.5 bg-muted/30 space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <ImageIcon className="h-4 w-4 text-primary" />
-                  <Label htmlFor="attach-image" className="text-sm font-medium cursor-pointer">
-                    Attach Generated AI Image
-                  </Label>
-                </div>
-                <Switch
-                  id="attach-image"
-                  checked={includeImage}
-                  onCheckedChange={setIncludeImage}
-                />
-              </div>
-
-              {includeImage && (
-                <div className="flex items-center gap-3 pt-1">
-                  <img
-                    src={initialImageUrl}
-                    alt="Post preview"
-                    className="h-20 w-20 rounded-md object-cover border shadow-sm"
-                  />
-                  <div className="text-xs text-muted-foreground space-y-1">
-                    <div className="font-medium text-foreground flex items-center gap-1">
-                      <Sparkles className="h-3 w-3 text-amber-500" />
-                      AI Marketing Visual Attached
-                    </div>
-                    <p>Will be posted alongside your message to image-supported platforms.</p>
-                  </div>
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="rounded-lg border border-dashed p-3 text-center text-xs text-muted-foreground">
-              Tip: Generate an image in the AI Template tab to automatically attach high-res marketing visuals here.
-            </div>
-          )}
         </div>
 
         <DialogFooter className="flex-col sm:flex-row gap-2 pt-3 border-t">
@@ -448,7 +638,7 @@ export default function DirectSocialPostDialog({
             type="button"
             onClick={handleDirectPost}
             disabled={isPosting || selectedPlatforms.length === 0 || !content.trim()}
-            className="bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:from-blue-700 hover:via-indigo-700 hover:to-purple-700 text-white min-w-[140px] shadow-md"
+            className="bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:from-blue-700 hover:via-indigo-700 hover:to-purple-700 text-white min-w-[150px] shadow-md"
           >
             {isPosting ? (
               <>
@@ -458,7 +648,7 @@ export default function DirectSocialPostDialog({
             ) : (
               <>
                 <Send className="mr-2 h-4 w-4" />
-                Direct Post ({selectedPlatforms.length})
+                Publish {includeMedia ? (selectedMediaType === "video" ? "Video" : "Image") : "Post"} ({selectedPlatforms.length})
               </>
             )}
           </Button>
