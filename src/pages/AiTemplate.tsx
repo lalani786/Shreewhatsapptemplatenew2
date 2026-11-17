@@ -684,29 +684,55 @@ export default function AiTemplate() {
             requestBody.promptImage = accessibleImage;
           }
 
-          const runwayBase = import.meta.env.DEV ? "/api/runway" : "https://api.runwayml.com";
-          const res = await fetch(`${runwayBase}/v1/image_to_video`, {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${cleanRunwayKey}`,
-              "Content-Type": "application/json",
-              "X-Runway-Version": "2024-09-13",
-            },
-            body: JSON.stringify(requestBody),
-          });
+          const candidateBases = import.meta.env.DEV
+            ? ["/api/runway-dev", "/api/runway"]
+            : ["https://api.dev.runwayml.com", "https://api.runwayml.com"];
 
-          if (!res.ok) {
-            const errText = await res.text();
-            const errJson = (() => { try { return JSON.parse(errText); } catch { return null; } })();
-            const msg = errJson?.error || errJson?.message || errText.slice(0, 180);
-            if (res.status === 401) {
-              toast.error("Invalid Runway API key (401 Unauthorized). Please check your key in API Setup.");
-            } else if (res.status === 402 || res.status === 403 || msg.toLowerCase().includes("credit")) {
-              toast.error("Insufficient Runway credits (402/403). Please top up credits on runwayml.com.");
-            } else {
-              toast.warning(`Runway API returned status ${res.status}: ${msg}`);
+          let chosenBase = candidateBases[0];
+          let res: Response | null = null;
+
+          for (const base of candidateBases) {
+            try {
+              const attempt = await fetch(`${base}/v1/image_to_video`, {
+                method: "POST",
+                headers: {
+                  Authorization: `Bearer ${cleanRunwayKey}`,
+                  "Content-Type": "application/json",
+                  "X-Runway-Version": "2024-09-13",
+                },
+                body: JSON.stringify(requestBody),
+              });
+
+              if (attempt.ok) {
+                res = attempt;
+                chosenBase = base;
+                break;
+              }
+
+              const errText = await attempt.text();
+              if (errText.includes("Incorrect hostname for API key")) {
+                console.warn(`Runway returned 'Incorrect hostname' on ${base}, attempting alternate hostname...`);
+                continue;
+              }
+
+              const errJson = (() => { try { return JSON.parse(errText); } catch { return null; } })();
+              const msg = errJson?.error || errJson?.message || errText.slice(0, 180);
+              if (attempt.status === 401) {
+                toast.error("Invalid Runway API key (401 Unauthorized). Please check your key in API Setup.");
+              } else if (attempt.status === 402 || attempt.status === 403 || msg.toLowerCase().includes("credit")) {
+                toast.error("Insufficient Runway credits (402/403). Please top up credits on runwayml.com.");
+              } else {
+                toast.warning(`Runway API returned status ${attempt.status}: ${msg}`);
+              }
+              throw new Error(`Runway API error: ${msg}`);
+            } catch (err: any) {
+              if (err.message?.includes("Runway API error")) throw err;
+              console.warn(`Runway attempt failed on ${base}:`, err);
             }
-            throw new Error(`Runway API error: ${msg}`);
+          }
+
+          if (!res || !res.ok) {
+            throw new Error("Could not connect to Runway AI. Falling back to animated motion video engine.");
           }
 
           const taskData = await res.json();
@@ -719,7 +745,7 @@ export default function AiTemplate() {
             await new Promise((r) => setTimeout(r, 3000));
             let checkRes: Response;
             try {
-              checkRes = await fetch(`${runwayBase}/v1/tasks/${taskId}`, {
+              checkRes = await fetch(`${chosenBase}/v1/tasks/${taskId}`, {
                 headers: {
                   Authorization: `Bearer ${cleanRunwayKey}`,
                   "X-Runway-Version": "2024-09-13",
@@ -826,7 +852,8 @@ export default function AiTemplate() {
       if (videoVoiceoverAudio) {
         toast.info(`Compositing ${videoDuration}s ${videoAspectRatio} promo video with synchronized voiceover...`);
         videoBlob = await createPromoVideoWithAudio({
-          videoBlob: animatedVideoBlob,
+          videoBlob: animatedVideoBlob || undefined,
+          imageUrl: !animatedVideoBlob ? generatedContent.generatedImage : undefined,
           text: scriptToOverlay,
           voiceAudioBase64: videoVoiceoverAudio,
           width,
@@ -839,7 +866,8 @@ export default function AiTemplate() {
       } else {
         toast.info(`Rendering ${videoDuration}s ${videoAspectRatio} animated promo video with text overlays...`);
         videoBlob = await createPromoVideo({
-          videoBlob: animatedVideoBlob,
+          videoBlob: animatedVideoBlob || undefined,
+          imageUrl: !animatedVideoBlob ? generatedContent.generatedImage : undefined,
           text: scriptToOverlay,
           durationMs,
           width,
@@ -951,7 +979,8 @@ export default function AiTemplate() {
       let videoBlob: Blob;
       if (audioBase64) {
         videoBlob = await createPromoVideoWithAudio({
-          videoBlob: animatedVideoBlob,
+          videoBlob: animatedVideoBlob || undefined,
+          imageUrl: !animatedVideoBlob ? (imageUrl || generatedContent.generatedImage) : undefined,
           text: scriptText,
           voiceAudioBase64: audioBase64,
           width,
@@ -963,7 +992,8 @@ export default function AiTemplate() {
         });
       } else {
         videoBlob = await createPromoVideo({
-          videoBlob: animatedVideoBlob,
+          videoBlob: animatedVideoBlob || undefined,
+          imageUrl: !animatedVideoBlob ? (imageUrl || generatedContent.generatedImage) : undefined,
           text: scriptText,
           durationMs,
           width,

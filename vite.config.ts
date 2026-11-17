@@ -55,6 +55,12 @@ export default defineConfig(() => ({
         rewrite: (path) => path.replace(/^\/api\/runway/, ""),
         secure: true,
       },
+      "/api/runway-dev": {
+        target: "https://api.dev.runwayml.com",
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api\/runway-dev/, ""),
+        secure: true,
+      },
     },
   },
   plugins: [react(), spaFallbackPlugin()],
