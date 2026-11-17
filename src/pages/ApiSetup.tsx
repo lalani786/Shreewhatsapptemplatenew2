@@ -66,6 +66,7 @@ export default function ApiSetup() {
     leonardo_api_key: "",
     gemini_api_key: "",
     nvidia_api_key: "",
+    runway_api_key: "",
     pexels_api_key: "",
   });
 
@@ -189,11 +190,12 @@ export default function ApiSetup() {
         });
         setImageApiKeys(prev => ({
           ...prev,
-          stability_api_key: data.stability_api_key || "",
-          leonardo_api_key: data.leonardo_api_key || "",
-          gemini_api_key: (data as any).gemini_api_key || "",
-          nvidia_api_key: (data as any).nvidia_api_key || "",
-          pexels_api_key: (data as any).pexels_api_key || "",
+          stability_api_key: data.stability_api_key || localStorage.getItem("stability_api_key") || "",
+          leonardo_api_key: data.leonardo_api_key || localStorage.getItem("leonardo_api_key") || "",
+          gemini_api_key: (data as any).gemini_api_key || localStorage.getItem("gemini_api_key") || "",
+          nvidia_api_key: (data as any).nvidia_api_key || localStorage.getItem("nvidia_api_key") || "",
+          runway_api_key: (data as any).runway_api_key || localStorage.getItem("runway_api_key") || "",
+          pexels_api_key: (data as any).pexels_api_key || localStorage.getItem("pexels_api_key") || "",
         }));
         if (data.whatsapp_phone_id && data.whatsapp_access_token) {
           setConnectionStatus("connected");
@@ -209,14 +211,16 @@ export default function ApiSetup() {
         }));
       }
 
-      // 3. Fallback for nvidia key
-      const localNvdKey = localStorage.getItem("nvidia_api_key");
-      if (localNvdKey) {
-        setImageApiKeys(prev => ({
-          ...prev,
-          nvidia_api_key: prev.nvidia_api_key || localNvdKey,
-        }));
-      }
+      // 3. Fallback for client keys from localStorage if not populated from Supabase
+      setImageApiKeys(prev => ({
+        ...prev,
+        nvidia_api_key: prev.nvidia_api_key || localStorage.getItem("nvidia_api_key") || "",
+        stability_api_key: prev.stability_api_key || localStorage.getItem("stability_api_key") || "",
+        leonardo_api_key: prev.leonardo_api_key || localStorage.getItem("leonardo_api_key") || "",
+        runway_api_key: prev.runway_api_key || localStorage.getItem("runway_api_key") || "",
+        pexels_api_key: prev.pexels_api_key || localStorage.getItem("pexels_api_key") || "",
+        pollinations_api_key: prev.pollinations_api_key || localStorage.getItem("pollinations_api_key") || "",
+      }));
     } catch (err) {
       console.warn("Error fetching credentials in ApiSetup:", err);
     } finally {
@@ -319,23 +323,41 @@ export default function ApiSetup() {
       return;
     }
 
-    // 2. Sync NVIDIA key
+    // 2. Sync all keys to localStorage as immediate durable client cache
     const nvdKey = imageApiKeys.nvidia_api_key?.trim() || "";
-    if (nvdKey) {
-      localStorage.setItem("nvidia_api_key", nvdKey);
-    } else {
-      localStorage.removeItem("nvidia_api_key");
-    }
+    if (nvdKey) localStorage.setItem("nvidia_api_key", nvdKey);
+    else localStorage.removeItem("nvidia_api_key");
 
-    // 3. Save other keys to api_credentials
+    const stabKey = imageApiKeys.stability_api_key?.trim() || "";
+    if (stabKey) localStorage.setItem("stability_api_key", stabKey);
+    else localStorage.removeItem("stability_api_key");
+
+    const leoKey = imageApiKeys.leonardo_api_key?.trim() || "";
+    if (leoKey) localStorage.setItem("leonardo_api_key", leoKey);
+    else localStorage.removeItem("leonardo_api_key");
+
+    const gemKey = imageApiKeys.gemini_api_key?.trim() || "";
+    if (gemKey) localStorage.setItem("gemini_api_key", gemKey);
+    else localStorage.removeItem("gemini_api_key");
+
+    const runwayKey = imageApiKeys.runway_api_key?.trim() || "";
+    if (runwayKey) localStorage.setItem("runway_api_key", runwayKey);
+    else localStorage.removeItem("runway_api_key");
+
+    const pexKey = imageApiKeys.pexels_api_key?.trim() || "";
+    if (pexKey) localStorage.setItem("pexels_api_key", pexKey);
+    else localStorage.removeItem("pexels_api_key");
+
+    // 3. Save to api_credentials
     const payload: Record<string, any> = {
       user_id: user.id,
       pollinations_api_key: pollKey || null,
-      stability_api_key: imageApiKeys.stability_api_key?.trim() || null,
-      leonardo_api_key: imageApiKeys.leonardo_api_key?.trim() || null,
-      gemini_api_key: imageApiKeys.gemini_api_key?.trim() || null,
-      nvidia_api_key: imageApiKeys.nvidia_api_key?.trim() || null,
-      pexels_api_key: imageApiKeys.pexels_api_key?.trim() || null,
+      stability_api_key: stabKey || null,
+      leonardo_api_key: leoKey || null,
+      gemini_api_key: gemKey || null,
+      nvidia_api_key: nvdKey || null,
+      runway_api_key: runwayKey || null,
+      pexels_api_key: pexKey || null,
     };
 
     let { error } = await supabase
@@ -350,6 +372,7 @@ export default function ApiSetup() {
       if (error.message.includes("nvidia_api_key")) delete safePayload.nvidia_api_key;
       if (error.message.includes("pexels_api_key")) delete safePayload.pexels_api_key;
       if (error.message.includes("gemini_api_key")) delete safePayload.gemini_api_key;
+      if (error.message.includes("runway_api_key")) delete safePayload.runway_api_key;
       const retry = await supabase
         .from("api_credentials")
         .upsert(safePayload as any, { onConflict: "user_id" });
@@ -361,6 +384,9 @@ export default function ApiSetup() {
       toast.error(error.message || "Failed to save image API keys");
     } else {
       toast.success("Image API keys saved successfully!");
+      // Notify other open pages (AiTemplate, SocialMedia, PhotoStudio)
+      window.dispatchEvent(new Event("image-keys-updated"));
+      window.dispatchEvent(new Event("pollinations-key-updated"));
     }
     setImageApiSaving(false);
   };

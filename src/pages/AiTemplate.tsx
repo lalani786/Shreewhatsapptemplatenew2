@@ -260,75 +260,114 @@ export default function AiTemplate() {
   // Selected model is always shown in the UI - it is never silently swapped.
   const selectedPollinationsModel = pollinationsModel || getDefaultModelForEndpoint(pollinationsEndpoint);
 
-  const fetchPollinationsKey = useCallback(async () => {
+  const fetchAvailableKeys = useCallback(async () => {
+    // 1. Immediately read client localStorage so keys show active without delay
+    const localNvd = localStorage.getItem("nvidia_api_key")?.trim() || "";
+    const localStability = localStorage.getItem("stability_api_key")?.trim() || "";
+    const localLeonardo = localStorage.getItem("leonardo_api_key")?.trim() || "";
+    const localRunway = localStorage.getItem("runway_api_key")?.trim() || "";
+    const localPexels = localStorage.getItem("pexels_api_key")?.trim() || "";
+    const localPoll = localStorage.getItem("pollinations_api_key")?.trim() || "";
+
+    if (localRunway) setUserRunwayKey(localRunway);
+    if (localPoll) setPollinationsApiKey(localPoll);
+
+    setAvailableKeys(prev => ({
+      ...prev,
+      nvidia_api_key: Boolean(localNvd || prev.nvidia_api_key),
+      stability_api_key: Boolean(localStability || prev.stability_api_key),
+      leonardo_api_key: Boolean(localLeonardo || prev.leonardo_api_key),
+      runway_api_key: Boolean(localRunway || prev.runway_api_key),
+      pexels_api_key: Boolean(localPexels || prev.pexels_api_key),
+      pollinations_api_key: Boolean(localPoll || prev.pollinations_api_key),
+    }));
+
+    // 2. Fetch Pollinations key from dedicated Supabase table (ai_api_keys)
+    let pollKey = localPoll;
     try {
-      const key = await loadPollinationsApiKeyFromSupabase();
-      setPollinationsApiKey(key);
-      setAvailableKeys(prev => ({ ...prev, pollinations_api_key: Boolean(key) }));
-    } catch (error) {
-      console.warn("Pollinations API key lookup skipped:", error);
+      const fetchedPollKey = await loadPollinationsApiKeyFromSupabase();
+      if (fetchedPollKey) {
+        pollKey = fetchedPollKey;
+        setPollinationsApiKey(fetchedPollKey);
+        setAvailableKeys(prev => ({ ...prev, pollinations_api_key: true }));
+      }
+    } catch (e) {
+      console.warn("Pollinations key fetch warning:", e);
+    }
+
+    // 3. Fetch from Supabase api_credentials with safe select("*")
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+
+      const { data, error } = await supabase
+        .from("api_credentials")
+        .select("*")
+        .eq("user_id", user.id)
+        .maybeSingle();
+
+      if (data && !error) {
+        const creds = data as any;
+        if (creds.elevenlabs_api_key) {
+          setUserElevenLabsKey(creds.elevenlabs_api_key);
+        }
+        const effRunway = (creds.runway_api_key as string)?.trim() || localRunway;
+        if (effRunway) {
+          setUserRunwayKey(effRunway);
+        }
+
+        setAvailableKeys(prev => ({
+          ...prev,
+          stability_api_key: Boolean(creds.stability_api_key || localStability),
+          leonardo_api_key: Boolean(creds.leonardo_api_key || localLeonardo),
+          gemini_api_key: Boolean(creds.gemini_api_key),
+          nvidia_api_key: Boolean(creds.nvidia_api_key || localNvd),
+          elevenlabs_api_key: Boolean(creds.elevenlabs_api_key),
+          runway_api_key: Boolean(effRunway),
+          pexels_api_key: Boolean(creds.pexels_api_key || localPexels),
+          pollinations_api_key: Boolean(creds.pollinations_api_key || pollKey || localPoll || prev.pollinations_api_key),
+        }));
+        setTextProvider("gemini");
+      }
+    } catch (err) {
+      console.warn("api_credentials fetch warning:", err);
     }
   }, []);
 
   useEffect(() => {
-    fetchAvailableKeys();
-    fetchPollinationsKey();
-  }, [fetchPollinationsKey]);
+    void fetchAvailableKeys();
+  }, [fetchAvailableKeys]);
 
   useEffect(() => {
-    const refreshPollinationsKey = () => {
-      void fetchPollinationsKey();
+    const handleKeyRefresh = () => {
+      void fetchAvailableKeys();
     };
-    window.addEventListener("focus", refreshPollinationsKey);
-    window.addEventListener("pollinations-key-updated", refreshPollinationsKey);
+    window.addEventListener("focus", handleKeyRefresh);
+    window.addEventListener("storage", handleKeyRefresh);
+    window.addEventListener("pollinations-key-updated", handleKeyRefresh);
+    window.addEventListener("image-keys-updated", handleKeyRefresh);
     return () => {
-      window.removeEventListener("focus", refreshPollinationsKey);
-      window.removeEventListener("pollinations-key-updated", refreshPollinationsKey);
+      window.removeEventListener("focus", handleKeyRefresh);
+      window.removeEventListener("storage", handleKeyRefresh);
+      window.removeEventListener("pollinations-key-updated", handleKeyRefresh);
+      window.removeEventListener("image-keys-updated", handleKeyRefresh);
     };
-  }, [fetchPollinationsKey]);
+  }, [fetchAvailableKeys]);
 
   // Auto-select first available external provider
   useEffect(() => {
+    if (imageProvider !== "auto") return;
     const externalProviders: { id: ImageProvider; key: string }[] = [
       { id: "nvidia", key: "nvidia_api_key" },
       { id: "stability", key: "stability_api_key" },
       { id: "leonardo", key: "leonardo_api_key" },
+      { id: "pollinations", key: "pollinations_api_key" },
     ];
     const available = externalProviders.find(p => availableKeys[p.key]);
     if (available) {
       setImageProvider(available.id);
     }
-  }, [availableKeys]);
-
-  const fetchAvailableKeys = async () => {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
-    const { data } = await supabase
-      .from("api_credentials")
-      .select("stability_api_key, leonardo_api_key, gemini_api_key, nvidia_api_key, elevenlabs_api_key, runway_api_key, pexels_api_key")
-      .eq("user_id", user.id)
-      .maybeSingle();
-    if (data) {
-      if (data.elevenlabs_api_key) {
-        setUserElevenLabsKey(data.elevenlabs_api_key);
-      }
-      if ((data as any).runway_api_key) {
-        setUserRunwayKey((data as any).runway_api_key);
-      }
-      setAvailableKeys(prev => ({
-        ...prev,
-        stability_api_key: !!data.stability_api_key,
-        leonardo_api_key: !!data.leonardo_api_key,
-        gemini_api_key: !!data.gemini_api_key,
-        nvidia_api_key: !!data.nvidia_api_key,
-        elevenlabs_api_key: !!data.elevenlabs_api_key,
-        runway_api_key: !!(data as any).runway_api_key,
-        pexels_api_key: !!(data as any).pexels_api_key,
-        pollinations_api_key: prev.pollinations_api_key || !!localStorage.getItem("pollinations_api_key"),
-      }));
-      setTextProvider("gemini");
-    }
-  };
+  }, [availableKeys, imageProvider]);
 
   const handleCheckNvidiaImageAccess = async (showSuccess = true) => {
     const key = (await getStoredNvidiaApiKey()) || localStorage.getItem("nvidia_api_key") || "";
@@ -1929,24 +1968,34 @@ IMAGE_PROMPT:
               <CardContent>
                 <div className="grid grid-cols-2 gap-2">
                   {imageProviders.map(({ id, label, keyName, description }) => {
-                    const isAvailable = id === "auto" || id === "lovable_ai" || id === "pollinations" || availableKeys[keyName];
+                    const isAvailable = id === "auto" || id === "lovable_ai" || id === "pollinations" || Boolean(availableKeys[keyName]);
                     return (
                       <button
                         key={id}
-                        disabled={!isAvailable}
-                        onClick={() => setImageProvider(id)}
+                        type="button"
+                        onClick={() => {
+                          setImageProvider(id);
+                          if (!isAvailable && keyName) {
+                            toast.info(`${label} requires an API key. You can add it in API Setup.`, {
+                              action: {
+                                label: "API Setup",
+                                onClick: () => navigate("/api-setup"),
+                              },
+                            });
+                          }
+                        }}
                         className={`relative flex flex-col items-start gap-1 rounded-lg border p-3 text-left transition-colors ${
                           imageProvider === id
-                            ? "border-primary bg-primary/10"
+                            ? "border-primary bg-primary/10 ring-1 ring-primary/40 shadow-sm"
                             : isAvailable
                               ? "border-border hover:border-primary/50"
-                              : "border-border opacity-50 cursor-not-allowed"
+                              : "border-border hover:border-amber-500/50 bg-muted/20"
                         }`}
                       >
                         <div className="flex items-center gap-2 w-full">
                           <span className="text-sm font-medium">{label}</span>
                           {isAvailable && id !== "lovable_ai" && id !== "pollinations" && (
-                            <Badge className="text-[10px] px-1.5 py-0 ml-auto bg-success">
+                            <Badge className="text-[10px] px-1.5 py-0 ml-auto bg-success text-white">
                               <CheckCircle className="h-2.5 w-2.5 mr-0.5" />
                               Active
                             </Badge>
@@ -1957,11 +2006,20 @@ IMAGE_PROMPT:
                               {hasPollinationsKey || availableKeys.pollinations_api_key ? "Active (API)" : "Free HD"}
                             </Badge>
                           )}
+                          {!isAvailable && keyName && (
+                            <span
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                navigate("/api-setup");
+                              }}
+                              className="text-[10px] text-amber-500 font-medium ml-auto hover:underline cursor-pointer"
+                              title="Click to configure in API Setup"
+                            >
+                              Key needed &rarr;
+                            </span>
+                          )}
                         </div>
                         <span className="text-xs text-muted-foreground">{description}</span>
-                        {!isAvailable && (
-                          <span className="text-[10px] text-destructive">Key not configured</span>
-                        )}
                       </button>
                     );
                   })}

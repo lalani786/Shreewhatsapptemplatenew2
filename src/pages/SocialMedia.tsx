@@ -852,7 +852,11 @@ export default function SocialMedia() {
       setAvailableKeys((prev) => ({ ...prev, pollinations_api_key: Boolean(k) }));
     };
     window.addEventListener("pollinations-key-updated", onPollKeyUpdate);
-    return () => window.removeEventListener("pollinations-key-updated", onPollKeyUpdate);
+    window.addEventListener("image-keys-updated", onPollKeyUpdate);
+    return () => {
+      window.removeEventListener("pollinations-key-updated", onPollKeyUpdate);
+      window.removeEventListener("image-keys-updated", onPollKeyUpdate);
+    };
   }, []);
 
   useEffect(() => {
@@ -869,37 +873,62 @@ export default function SocialMedia() {
   }, []);
 
   const fetchImageProvider = async () => {
-    const pollKey = await loadPollinationsApiKeyFromSupabase();
+    const localPoll = localStorage.getItem("pollinations_api_key") || "";
+    const localNvd = localStorage.getItem("nvidia_api_key") || "";
+    const localRunway = localStorage.getItem("runway_api_key") || "";
+    const localPexels = localStorage.getItem("pexels_api_key") || "";
+    const localStability = localStorage.getItem("stability_api_key") || "";
+    const localLeonardo = localStorage.getItem("leonardo_api_key") || "";
+
+    const pollKey = (await loadPollinationsApiKeyFromSupabase()) || localPoll;
     setPollinationsApiKey(pollKey);
 
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) {
-      setAvailableKeys((prev) => ({ ...prev, pollinations_api_key: Boolean(pollKey) }));
+      setAvailableKeys({
+        stability_api_key: Boolean(localStability),
+        leonardo_api_key: Boolean(localLeonardo),
+        nvidia_api_key: Boolean(localNvd),
+        elevenlabs_api_key: false,
+        pollinations_api_key: Boolean(pollKey),
+        runway_api_key: Boolean(localRunway),
+        pexels_api_key: Boolean(localPexels),
+      });
       return;
     }
+
     const { data } = await supabase
       .from("api_credentials")
-      .select("stability_api_key, leonardo_api_key, nvidia_api_key, elevenlabs_api_key, runway_api_key, pexels_api_key")
+      .select("*")
       .eq("user_id", user.id)
       .maybeSingle();
-    if (data) {
-      if ((data as any).elevenlabs_api_key) {
-        setUserElevenLabsKey((data as any).elevenlabs_api_key);
-      }
-      setAvailableKeys({
-        stability_api_key: !!data.stability_api_key,
-        leonardo_api_key: !!data.leonardo_api_key,
-        nvidia_api_key: !!data.nvidia_api_key,
-        elevenlabs_api_key: !!(data as any).elevenlabs_api_key,
-        pollinations_api_key: Boolean(pollKey),
-        runway_api_key: !!(data as any).runway_api_key,
-        pexels_api_key: !!(data as any).pexels_api_key,
-      });
-      if (data.nvidia_api_key) setImageProvider("nvidia");
-      else if (data.stability_api_key) setImageProvider("stability");
-      else if (data.leonardo_api_key) setImageProvider("leonardo");
-      else if (pollKey) setImageProvider("pollinations");
+
+    const creds = (data as any) || {};
+    if (creds.elevenlabs_api_key) {
+      setUserElevenLabsKey(creds.elevenlabs_api_key);
     }
+
+    const effPoll = Boolean(pollKey || creds.pollinations_api_key);
+    const effNvd = Boolean(creds.nvidia_api_key || localNvd);
+    const effStab = Boolean(creds.stability_api_key || localStability);
+    const effLeo = Boolean(creds.leonardo_api_key || localLeonardo);
+    const effRunway = Boolean(creds.runway_api_key || localRunway);
+    const effPexels = Boolean(creds.pexels_api_key || localPexels);
+
+    setAvailableKeys({
+      stability_api_key: effStab,
+      leonardo_api_key: effLeo,
+      nvidia_api_key: effNvd,
+      elevenlabs_api_key: Boolean(creds.elevenlabs_api_key),
+      pollinations_api_key: effPoll,
+      runway_api_key: effRunway,
+      pexels_api_key: effPexels,
+    });
+
+    if (effNvd) setImageProvider("nvidia");
+    else if (effStab) setImageProvider("stability");
+    else if (effLeo) setImageProvider("leonardo");
+    else if (effPoll) setImageProvider("pollinations");
   };
 
   const handleCheckNvidiaImageAccess = async (showSuccess = true) => {
