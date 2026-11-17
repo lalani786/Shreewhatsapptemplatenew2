@@ -49,6 +49,12 @@ export default defineConfig(() => ({
         rewrite: (path) => path.replace(/^\/api\/nvidia/, ""),
         secure: true,
       },
+      "/api/runway": {
+        target: "https://api.runwayml.com",
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api\/runway/, ""),
+        secure: true,
+      },
     },
   },
   plugins: [react(), spaFallbackPlugin()],

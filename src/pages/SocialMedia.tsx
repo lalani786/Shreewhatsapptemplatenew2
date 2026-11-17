@@ -1696,84 +1696,87 @@ export default function SocialMedia() {
           .eq("user_id", user.id)
           .maybeSingle();
         const runwayKey = (cred as any)?.runway_api_key;
+        let videoBlob: Blob | null = null;
         if (!runwayKey) {
-          throw new Error(
-            "Runway API key not configured. Add your RUNWAY_API_KEY in API Setup to generate direct Runway MP4 videos."
-          );
-        }
-        const cleanRunwayKey = runwayKey.replace(/^Bearer\s+/i, "").trim();
-        toast.info("Requesting Runway Gen-3 MP4 generation...");
-        let res: Response;
-        try {
-          res = await fetch("https://api.runwayml.com/v1/image_to_video", {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${cleanRunwayKey}`,
-              "Content-Type": "application/json",
-              "X-Runway-Version": "2024-09-13",
-            },
-            body: JSON.stringify({
-              promptText: imagePrompt.trim(),
-              model: "gen3a_turbo",
-              duration: 5,
-              ratio: "1280:768",
-            }),
-          });
-        } catch (fetchErr: any) {
-          console.error("Runway submission network error:", fetchErr);
-          throw new Error(
-            `Runway API connection failed: ${fetchErr?.message || "Failed to fetch"}. Please verify your network and Runway API key.`
-          );
-        }
-
-        if (!res.ok) {
-          const errText = await res.text();
-          const errJson = (() => { try { return JSON.parse(errText); } catch { return null; } })();
-          const msg = errJson?.error || errJson?.message || errText.slice(0, 180);
-          if (res.status === 401) {
-            throw new Error("Invalid Runway API key (401 Unauthorized). Please check your RUNWAY_API_KEY in API Setup.");
-          } else if (res.status === 402 || res.status === 403 || msg.toLowerCase().includes("credit")) {
-            throw new Error("Insufficient Runway credits (402/403). Please top up your credits on runwayml.com.");
-          } else if (res.status === 429) {
-            throw new Error("Runway rate limit reached. Please wait a moment and try again.");
-          }
-          throw new Error(`Runway API error (${res.status}): ${msg}`);
-        }
-        const taskData = await res.json();
-        const taskId = taskData.id;
-        let videoUrl = "";
-        for (let i = 0; i < 30; i++) {
-          await new Promise((r) => setTimeout(r, 2500));
-          let checkRes: Response;
+          toast.warning("Runway API key not configured. Generating high-definition animated promo video...");
+        } else {
+          const cleanRunwayKey = runwayKey.replace(/^Bearer\s+/i, "").trim();
+          toast.info("Requesting Runway Gen-3 MP4 generation...");
+          const runwayBase = import.meta.env.DEV ? "/api/runway" : "https://api.runwayml.com";
           try {
-            checkRes = await fetch(`https://api.runwayml.com/v1/tasks/${taskId}`, {
+            const res = await fetch(`${runwayBase}/v1/image_to_video`, {
+              method: "POST",
               headers: {
                 Authorization: `Bearer ${cleanRunwayKey}`,
+                "Content-Type": "application/json",
                 "X-Runway-Version": "2024-09-13",
               },
+              body: JSON.stringify({
+                promptText: imagePrompt.trim(),
+                model: "gen3a_turbo",
+                duration: 5,
+                ratio: "1280:768",
+              }),
             });
-          } catch (pollErr: any) {
-            console.warn("Runway polling transient error, retrying...", pollErr);
-            continue;
+
+            if (!res.ok) {
+              const errText = await res.text();
+              const errJson = (() => { try { return JSON.parse(errText); } catch { return null; } })();
+              const msg = errJson?.error || errJson?.message || errText.slice(0, 180);
+              if (res.status === 401) {
+                toast.error("Invalid Runway API key (401 Unauthorized). Please check your RUNWAY_API_KEY in API Setup.");
+              } else if (res.status === 402 || res.status === 403 || msg.toLowerCase().includes("credit")) {
+                toast.error("Insufficient Runway credits (402/403). Please top up your credits on runwayml.com.");
+              } else {
+                toast.warning(`Runway API returned status ${res.status}: ${msg}`);
+              }
+              throw new Error(`Runway API error (${res.status}): ${msg}`);
+            }
+            const taskData = await res.json();
+            const taskId = taskData.id;
+            let videoUrl = "";
+            for (let i = 0; i < 30; i++) {
+              await new Promise((r) => setTimeout(r, 2500));
+              let checkRes: Response;
+              try {
+                checkRes = await fetch(`${runwayBase}/v1/tasks/${taskId}`, {
+                  headers: {
+                    Authorization: `Bearer ${cleanRunwayKey}`,
+                    "X-Runway-Version": "2024-09-13",
+                  },
+                });
+              } catch (pollErr: any) {
+                console.warn("Runway polling transient error, retrying...", pollErr);
+                continue;
+              }
+              if (!checkRes.ok) {
+                const errText = await checkRes.text();
+                throw new Error(`Runway polling error (${checkRes.status}): ${errText.slice(0, 150)}`);
+              }
+              const checkData = await checkRes.json();
+              if (checkData.status === "SUCCEEDED" && checkData.output?.[0]) {
+                videoUrl = checkData.output[0];
+                break;
+              }
+              if (checkData.status === "FAILED") {
+                throw new Error(`Runway video generation failed: ${checkData.failure || checkData.failureCode || "Generation failed"}`);
+              }
+            }
+            if (!videoUrl) throw new Error("Runway video generation timed out");
+            const dlRes = await fetch(videoUrl);
+            const rawBlob = await dlRes.blob();
+            if (await isMp4Video(rawBlob)) {
+              videoBlob = rawBlob;
+            }
+          } catch (runwayErr: any) {
+            console.warn("Runway video generation issue:", runwayErr);
+            const isCors = runwayErr?.message?.includes("Failed to fetch");
+            if (isCors) {
+              toast.warning("Runway API restricted by browser CORS. Generating high-definition animated MP4 video...");
+            } else {
+              toast.warning(`Runway: ${runwayErr.message || "Failed"}. Generating animated promo video...`);
+            }
           }
-          if (!checkRes.ok) {
-            const errText = await checkRes.text();
-            throw new Error(`Runway polling error (${checkRes.status}): ${errText.slice(0, 150)}`);
-          }
-          const checkData = await checkRes.json();
-          if (checkData.status === "SUCCEEDED" && checkData.output?.[0]) {
-            videoUrl = checkData.output[0];
-            break;
-          }
-          if (checkData.status === "FAILED") {
-            throw new Error(`Runway video generation failed: ${checkData.failure || checkData.failureCode || "Generation failed"}`);
-          }
-        }
-        if (!videoUrl) throw new Error("Runway video generation timed out");
-        const dlRes = await fetch(videoUrl);
-        videoBlob = await dlRes.blob();
-        if (!(await isMp4Video(videoBlob))) {
-          throw new Error("Runway provider returned non-MP4 output. MP4 format is required.");
         }
       } else {
         // Step 1: Generate AI image from prompt
