@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import * as tus from "tus-js-client";
 import {
   Dialog,
   DialogContent,
@@ -184,8 +185,130 @@ export default function DirectSocialPostDialog({
   };
 
   /**
+   * Resumable TUS upload for MP4 video files to Supabase Storage.
+   * Handles large video files in 6MB chunks, preventing gateway size limits.
+   * Preserves exact original MP4 bytes, resolution, framerate, and audio track without transcoding.
+   */
+  const uploadVideoWithTus = async (
+    blob: Blob,
+    fileName: string
+  ): Promise<string> => {
+    const supabaseUrl = (import.meta.env.VITE_SUPABASE_URL || "").replace(/\/+$/, "");
+    const supabaseKey =
+      import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
+      import.meta.env.VITE_SUPABASE_ANON_KEY ||
+      "";
+
+    if (!supabaseUrl || !supabaseKey) {
+      throw new Error("Supabase URL or Publishable Key is not configured.");
+    }
+
+    const { data: { session } } = await supabase.auth.getSession();
+    const authToken = session?.access_token || supabaseKey;
+    const sizeMb = (blob.size / (1024 * 1024)).toFixed(2);
+
+    // Optional pre-check: verify if bucket has a configured file_size_limit
+    try {
+      const { data: bucketInfo } = await supabase.storage.getBucket("whatsapp-media");
+      if (bucketInfo?.file_size_limit && blob.size > bucketInfo.file_size_limit) {
+        const limitMb = (bucketInfo.file_size_limit / (1024 * 1024)).toFixed(1);
+        throw new Error(
+          `Video file (${sizeMb} MB) exceeds the maximum allowed file size of ${limitMb} MB configured for the 'whatsapp-media' bucket. Please increase the Storage file-size limit in your Supabase Dashboard (Storage > Buckets > whatsapp-media > Edit bucket > File size limit), or select a shorter video duration.`
+        );
+      }
+    } catch (checkErr: any) {
+      if (checkErr.message?.includes("exceeds the maximum allowed file size")) {
+        throw checkErr;
+      }
+      // If getBucket fails (e.g. non-admin client RLS), proceed to TUS upload where Supabase checks limits
+    }
+
+    return new Promise<string>((resolve, reject) => {
+      let lastReportedPct = 0;
+      const upload = new tus.Upload(blob, {
+        endpoint: `${supabaseUrl}/storage/v1/upload/resumable`,
+        retryDelays: [0, 3000, 5000, 10000, 20000],
+        headers: {
+          authorization: `Bearer ${authToken}`,
+          apikey: supabaseKey,
+          "x-upsert": "true",
+        },
+        uploadDataDuringCreation: true,
+        removeFingerprintOnSuccess: true,
+        metadata: {
+          bucketName: "whatsapp-media",
+          objectName: fileName,
+          contentType: "video/mp4",
+          cacheControl: "3600",
+        },
+        chunkSize: 6 * 1024 * 1024, // 6MB chunk size (Supabase TUS requirement)
+        onError: (error: any) => {
+          console.error("TUS video upload error:", error);
+          const errMsg = error?.message || String(error);
+          const responseBody =
+            typeof error?.originalResponse?.getBody === "function"
+              ? error.originalResponse.getBody()
+              : "";
+          const status = error?.originalResponse?.getStatus?.() || 0;
+          const combined = `${errMsg} ${responseBody}`;
+
+          if (
+            status === 413 ||
+            /exceeded the maximum allowed size|Payload Too Large|Entity Too Large|file size limit/i.test(
+              combined
+            )
+          ) {
+            reject(
+              new Error(
+                `Video file (${sizeMb} MB) exceeds the maximum allowed file size configured for the 'whatsapp-media' bucket. Please increase the Storage file-size limit in your Supabase Dashboard (Storage > Buckets > whatsapp-media > Edit bucket > File size limit), or select a shorter video duration.`
+              )
+            );
+            return;
+          }
+
+          reject(new Error(`TUS upload failed: ${errMsg}`));
+        },
+        onProgress: (bytesUploaded, bytesTotal) => {
+          if (bytesTotal > 0) {
+            const percent = Math.round((bytesUploaded / bytesTotal) * 100);
+            if (percent >= lastReportedPct + 25 || percent === 100) {
+              lastReportedPct = percent;
+              toast.info(`Uploading video to cloud storage: ${percent}%`);
+            }
+          }
+        },
+        onSuccess: () => {
+          const { data: publicUrlData } = supabase.storage
+            .from("whatsapp-media")
+            .getPublicUrl(fileName);
+
+          if (!publicUrlData?.publicUrl) {
+            reject(new Error("Could not retrieve public URL for uploaded video file"));
+            return;
+          }
+          resolve(publicUrlData.publicUrl);
+        },
+      });
+
+      upload
+        .findPreviousUploads()
+        .then((previousUploads) => {
+          if (previousUploads.length) {
+            upload.resumeFromPreviousUpload(previousUploads[0]);
+          }
+          upload.start();
+        })
+        .catch(() => {
+          upload.start();
+        });
+    });
+  };
+
+  /**
    * Uploads base64 or blob media to Supabase storage with correct MIME type and extension.
-   * If upload fails, throws an error and NEVER silently falls back to another media type.
+   * - Large video files: Uses Supabase TUS resumable uploads (6MB chunks) without transcoding.
+   * - Image files: Uses standard Supabase storage upload.
+   * If upload fails, throws a clear descriptive error and NEVER silently falls back to another media type.
    */
   const uploadMediaToStorage = async (
     sourceUrl: string,
@@ -221,6 +344,12 @@ export default function DirectSocialPostDialog({
       const contentType = isVideo ? "video/mp4" : blob.type || "image/png";
       const fileName = `${userId}/social/${mediaKind}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
 
+      // Video uploads: Use Supabase TUS resumable upload for chunked large file support
+      if (isVideo) {
+        return await uploadVideoWithTus(blob, fileName);
+      }
+
+      // Image uploads: Use standard Supabase storage upload method
       const { error: uploadError } = await supabase.storage
         .from("whatsapp-media")
         .upload(fileName, blob, {
@@ -229,6 +358,12 @@ export default function DirectSocialPostDialog({
         });
 
       if (uploadError) {
+        if (/exceeded the maximum allowed size|file size limit/i.test(uploadError.message)) {
+          const sizeMb = (blob.size / (1024 * 1024)).toFixed(2);
+          throw new Error(
+            `The image file (${sizeMb} MB) exceeds the maximum allowed file size configured for the 'whatsapp-media' bucket. Please increase the Storage file-size limit in your Supabase Dashboard.`
+          );
+        }
         throw new Error(`Upload error: ${uploadError.message}`);
       }
 
