@@ -426,7 +426,7 @@ export default function AiTemplate() {
     if (voicePreviewAudioRef.current) {
       try {
         voicePreviewAudioRef.current.pause();
-      } catch {}
+      } catch { }
       voicePreviewAudioRef.current = null;
     }
     const langObj = SUPPORTED_LANGUAGES.find((l) => l.id === newLangId);
@@ -499,7 +499,7 @@ export default function AiTemplate() {
     if (voicePreviewAudioRef.current) {
       try {
         voicePreviewAudioRef.current.pause();
-      } catch {}
+      } catch { }
       voicePreviewAudioRef.current = null;
     }
     setIsPreviewingVoice(true);
@@ -648,10 +648,130 @@ export default function AiTemplate() {
     return url;
   };
 
+  // Domain keywords for automatic classification & prioritization
+  const SOFTWARE_KEYWORDS = [
+    "pharmacy app", "medical software", "pos software", "billing software",
+    "inventory management", "accounting software", "software", "app", "application",
+    "pos", "crm", "billing", "erp", "saas", "dashboard", "portal", "system",
+    "tally", "tallybook", "cloud software", "gst billing", "stock management", "fintech",
+    "purchase bill", "medical store", "pharmacy store", "chemist"
+  ];
+
+  const FOOTWEAR_KEYWORDS = [
+    "footwear", "shoe", "shoes", "sneaker", "sneakers", "sandal", "sandals",
+    "boots", "slippers", "heels", "loafers", "चप्पल", "जूते"
+  ];
+
+  const GARMENT_KEYWORDS = [
+    "garment", "garments", "clothing", "apparel", "dress", "saree", "shirt",
+    "t-shirt", "jeans", "fabric", "textile", "fashion wear", "suit", "kurti", "कपड़े"
+  ];
+
+  interface PromptContextResolution {
+    domain: "software" | "footwear" | "garments" | "general";
+    brandOrProductName: string;
+    productCategory: string;
+    resolvedBusinessType: string;
+    resolvedOccasion: string;
+    isCustomOccasion: boolean;
+    hasDiscount: boolean;
+    discountText: string;
+    featuresToHighlight: string[];
+  }
+
+  function resolvePromptContext(opts: {
+    businessType?: string;
+    productCategory?: string;
+    occasion?: string;
+    customPrompt?: string;
+    discount?: number;
+  }): PromptContextResolution {
+    const customLower = (opts.customPrompt || "").toLowerCase();
+    const categoryLower = (opts.productCategory || "").toLowerCase();
+    const businessLower = (opts.businessType || "").toLowerCase();
+
+    // Priority 1: Check Custom Instructions for domain indicators
+    let domain: "software" | "footwear" | "garments" | "general" = "general";
+    if (SOFTWARE_KEYWORDS.some((kw) => customLower.includes(kw) || categoryLower.includes(kw))) {
+      domain = "software";
+    } else if (FOOTWEAR_KEYWORDS.some((kw) => customLower.includes(kw) || categoryLower.includes(kw) || businessLower.includes(kw))) {
+      domain = "footwear";
+    } else if (GARMENT_KEYWORDS.some((kw) => customLower.includes(kw) || categoryLower.includes(kw) || businessLower.includes(kw))) {
+      domain = "garments";
+    } else if (businessLower.includes("footwear")) {
+      domain = "footwear";
+    } else if (businessLower.includes("clothing") || businessLower.includes("garment")) {
+      domain = "garments";
+    }
+
+    // Extract brand or product name
+    let brandOrProductName = "";
+    const tallyMatch = (opts.customPrompt || "").match(/\b(tally\s*book\s*pos|tallybook\s*pos|tallybook|tally\s*pos)\b/i);
+    if (tallyMatch) {
+      brandOrProductName = "TallyBook POS";
+    } else if (opts.productCategory && opts.productCategory.trim() && opts.productCategory.toLowerCase() !== "other") {
+      brandOrProductName = opts.productCategory.trim();
+    }
+
+    // Extract software features to highlight from customPrompt
+    const featuresToHighlight: string[] = [];
+    if (opts.customPrompt) {
+      if (/pharmacy\s*billing/i.test(opts.customPrompt)) featuresToHighlight.push("Fast Pharmacy Billing");
+      if (/stock/i.test(opts.customPrompt)) featuresToHighlight.push("Medicine Stock Management");
+      if (/batch/i.test(opts.customPrompt)) featuresToHighlight.push("Batch Number Management");
+      if (/expiry/i.test(opts.customPrompt)) featuresToHighlight.push("Expiry Date Tracking");
+      if (/gst/i.test(opts.customPrompt)) featuresToHighlight.push("GST Billing");
+      if (/scan|1\s*click/i.test(opts.customPrompt)) featuresToHighlight.push("1-Click Purchase Bill Scanning");
+      if (/purchase.*entry|purchase.*bill/i.test(opts.customPrompt)) featuresToHighlight.push("Automatic Purchase Bill Entry");
+    }
+
+    // Business Type resolution - NEVER use literal "Other"
+    let resolvedBusinessType = (opts.businessType || "").trim();
+    if (resolvedBusinessType.toLowerCase() === "other" || !resolvedBusinessType) {
+      if (domain === "software") {
+        resolvedBusinessType = brandOrProductName || (opts.productCategory ? `${opts.productCategory} Solutions` : "Smart Software Solutions");
+      } else if (domain === "footwear") {
+        resolvedBusinessType = "Premium Footwear Store";
+      } else if (domain === "garments") {
+        resolvedBusinessType = "Exclusive Fashion & Garments";
+      } else {
+        resolvedBusinessType = brandOrProductName || "Premium Retail Solutions";
+      }
+    }
+
+    // Occasion resolution - NEVER use literal "Custom"
+    const isCustomOccasion = (opts.occasion || "").toLowerCase() === "custom" || !opts.occasion?.trim();
+    let resolvedOccasion = (opts.occasion || "").trim();
+    if (isCustomOccasion) {
+      resolvedOccasion = "Special Promotional Showcase";
+    }
+
+    const hasDiscount = Boolean(opts.discount && opts.discount > 0);
+    const discountText = hasDiscount ? `${opts.discount}% OFF` : "";
+
+    return {
+      domain,
+      brandOrProductName,
+      productCategory: (opts.productCategory || "").trim(),
+      resolvedBusinessType,
+      resolvedOccasion,
+      isCustomOccasion,
+      hasDiscount,
+      discountText,
+      featuresToHighlight,
+    };
+  }
+
   const buildDynamicMotionPrompt = (customUserPrompt?: string): string => {
     const parts: string[] = [];
-    const subject = (formData.productCategory || formData.businessType || "footwear product").trim();
-    const occasion = (formData.occasion || "commercial showcase").trim();
+    const ctx = resolvePromptContext({
+      businessType: formData.businessType,
+      productCategory: formData.productCategory,
+      occasion: formData.occasion,
+      customPrompt: customUserPrompt || formData.customPrompt,
+    });
+    const subject = ctx.brandOrProductName || formData.productCategory || ctx.resolvedBusinessType;
+    const occasion = ctx.resolvedOccasion;
 
     parts.push(`Google Flow cinematic commercial advertisement video showcasing ${subject} for ${occasion}.`);
 
@@ -660,15 +780,24 @@ export default function AiTemplate() {
       parts.push(`Product identity & construction details: ${details.trim()}.`);
     }
 
-    // Google Flow motion quality directives (rotation, camera tracking, dynamic lighting, product locking)
-    parts.push(
-      "Cinematic Camera Choreography: Continuous 360-degree turntable product rotation revealing bottom outsole tread, midsole cushioning, heel counter, side profile, and footwear upper construction.",
-      "Dynamic slow zoom-in with smooth dolly tracking and orbital sweeping camera movement around the product.",
-      "Lighting & Shadows: Moving commercial studio spotlight illumination, soft specular reflections gliding across product surfaces, realistic contact shadows shifting along the ground plane.",
-      "Atmospheric Motion: Subtle floating ambient dust particles, gentle atmospheric haze with shallow depth of field bokeh transitions.",
-      "Product Preservation: Strict product identity lock—preserve authentic footwear silhouette, color scheme, materials, stitching, shoe laces, and brand logo with zero warping or distortion.",
-      "Ultra high framerate, photorealistic 4K commercial advertisement quality with fluid continuous multi-frame motion."
-    );
+    if (ctx.domain === "software") {
+      parts.push(
+        "Cinematic Camera Choreography: Smooth dolly and pan movements showcasing a modern glowing digital tablet interface, dynamic animated pharmacy billing metrics, floating holographic inventory graphs, and interactive UI dashboard elements.",
+        "Lighting & Shadows: Subtle tech studio lighting with futuristic teal and cyan illumination, realistic soft screen glow, and clean minimalist workspace ambiance.",
+        "Product Preservation: Strict software interface lock—preserve clean typography, medical billing layouts, and professional dashboard styling with zero distortion.",
+        "Ultra high framerate, photorealistic 4K commercial advertisement quality with fluid continuous multi-frame motion."
+      );
+    } else {
+      // Physical product / footwear / garments
+      parts.push(
+        "Cinematic Camera Choreography: Continuous 360-degree turntable product rotation revealing multi-angle details, textures, side profile, and premium craftsmanship.",
+        "Dynamic slow zoom-in with smooth dolly tracking and orbital sweeping camera movement around the product.",
+        "Lighting & Shadows: Moving commercial studio spotlight illumination, soft specular reflections gliding across product surfaces, realistic contact shadows shifting along the ground plane.",
+        "Atmospheric Motion: Subtle floating ambient dust particles, gentle atmospheric haze with shallow depth of field bokeh transitions.",
+        "Product Preservation: Strict product identity lock—preserve authentic silhouette, color scheme, materials, and brand logo with zero warping or distortion.",
+        "Ultra high framerate, photorealistic 4K commercial advertisement quality with fluid continuous multi-frame motion."
+      );
+    }
 
     if (formData.customPrompt?.trim()) {
       parts.push(`Creative directives: ${formData.customPrompt.trim()}`);
@@ -1120,116 +1249,269 @@ CRITICAL RULES:
     }
   };
 
-function generateSmartFallbackTemplate(opts: {
-  businessType: string;
-  productCategory?: string;
-  discount?: number;
-  occasion: string;
-  customPrompt?: string;
-  isVideo: boolean;
-  videoDuration: VideoDuration;
-  aspectRatio: VideoAspectRatio;
-  language: string;
-  gender: "male" | "female";
-}): { template: string; imagePrompt: string } {
-  const { businessType, productCategory, discount, occasion, isVideo, videoDuration, aspectRatio, language, gender } = opts;
-  const item = productCategory || businessType || "products";
-  const hasDisc = discount && discount > 0;
-  const discText = hasDisc ? `${discount}%` : "";
-  const langCode = (language || "hi").split("-")[0].toLowerCase();
-  const aspectConfig = VIDEO_ASPECT_RATIOS[aspectRatio] || VIDEO_ASPECT_RATIOS["9:16"];
+  function buildDynamicAiPrompt(opts: {
+    businessType: string;
+    productCategory?: string;
+    discount?: number;
+    occasion: string;
+    customPrompt?: string;
+    isVideo: boolean;
+    videoDuration?: VideoDuration;
+    aspectRatio?: VideoAspectRatio;
+    language?: string;
+    gender?: "male" | "female";
+    selectedVoiceId?: string;
+  }) {
+    const ctx = resolvePromptContext(opts);
+    const isVideo = opts.isVideo;
+    const duration = opts.videoDuration || 15;
+    const lang = opts.language || "hi";
+    const gender = opts.gender || "male";
+    const aspect = opts.aspectRatio || "9:16";
+    const aspectConfig = VIDEO_ASPECT_RATIOS[aspect] || VIDEO_ASPECT_RATIOS["9:16"];
+    const targetWordRule = VIDEO_DURATIONS.find((d) => d.duration === duration) || VIDEO_DURATIONS[1];
+    const selectedVoiceObj = SUPPORTED_VOICES.find((v) => v.id === opts.selectedVoiceId);
 
-  let template = "";
-  if (!isVideo) {
-    template = hasDisc
-      ? `🎉 Special ${occasion} Celebration! 🎉\n\nUpgrade your style with exclusive ${item} from ${businessType}!\n\n✨ Flat ${discText} OFF on our entire premium collection!\n🚚 Express Delivery & Premium Quality Guaranteed.\n\n👉 Contact us now to claim your exclusive offer!`
-      : `✨ Happy ${occasion} from ${businessType}! ✨\n\nDiscover our latest premium collection of ${item}. Crafted for elegance and unparalleled quality.\n\n📍 Visit our store or message us today to explore the collection!`;
-  } else {
-    if (langCode === "gu") {
-      if (videoDuration === 5) {
-        template = hasDisc
-          ? `ધમાકેદાર ${occasion} ઓફર! અમારા પ્રીમિયમ ${item} પર મેળવો ${discText} ની ભારે છૂટ. આજે જ પધારો!`
-          : `ખાસ ${occasion} કલેક્શન! અમારા પ્રીમિયમ ${item} સાથે તમારો અંદાજ બદલો. આજે જ મુલાકાત લો!`;
-      } else if (videoDuration === 15) {
-        template = hasDisc
-          ? `નમસ્તે મિત્રો! આ ${occasion} પર ${businessType} લાવ્યા છે ખાસ ઓફર. અમારા પ્રીમિયમ ${item} પર મેળવો ફ્લેટ ${discText} ની વિશેષ છૂટ. શ્રેષ્ઠ ક્વોલિટી, આરામદાયક સ્ટાઇલ અને લેટેસ્ટ ડિઝાઇન. આજે જ મુલાકાત લો અને ઑફરનો લાભ ઉઠાવો!`
-          : `નમસ્તે મિત્રો! આ ${occasion} પર ${businessType} લાવ્યા છે સુપ્રીમ કલેક્શન. અમારા પ્રીમિયમ ${item} આપે છે બેહતરીન કમ્ફર્ટ અને અદભુત લુક. દરેક પળમાં ચમકો નવા આત્મવિશ્વાસ સાથે. આજે જ મુલાકાત લો અથવા ઓર્ડર કરો!`;
-      } else if (videoDuration === 30) {
-        template = hasDisc
-          ? `નમસ્તે દોસ્તો! આ ${occasion} તમારા માટે કંઈક ખાસ લઈને આવ્યું છે. ${businessType} લાવ્યા છે પ્રીમિયમ ${item} નું સુપરહિટ કલેક્શન, એ પણ ફ્લેટ ${discText} ની ધમાકેદાર છૂટ સાથે! આધુનિક ડિઝાઇન, અતૂટ ટકાઉપણું અને અલ્ટીમેટ કમ્ફર્ટ હવે તમારા બજેટમાં. લિમિટેડ સ્ટોક ઉપલબ્ધ છે, તો મોડું ના કરો. આજે જ અમારા સ્ટોરની મુલાકાત લો અથવા ઓનલાઇન ઓર્ડર બુક કરો અને ઉત્સવનો આનંદ બમણો કરો!`
-          : `નમસ્તે દોસ્તો! આ ${occasion} તમારા માટે લાવ્યું છે નવી ખુશીઓ. ${businessType} પ્રસ્તુત કરે છે પ્રીમિયમ ${item} નું સૌથી નવું કલેક્શન. દરેક ઉત્પાદનમાં ઉત્કૃષ્ટ કારીગરી, શાનદાર ફિનિશિંગ અને લાંબા સમય સુધી ચાલતો આરામ. તમારા વ્યક્તિત્વને આપો એક નવી ઓળખ. સ્ટોક લિમિટેડ છે, તો આજે જ મુલાકાત લો અથવા વોટ્સએપ પર અમારો સંપર્ક કરો!`;
-      } else {
-        template = `નમસ્તે મિત્રો! આ ${occasion} ના પાવન પર્વે ${businessType} તરફથી હાર્દિક શુભેચ્છાઓ. અમે લાવ્યા છીએ અમારા પ્રીમિયમ ${item} ની વિશાળ શ્રેણી. અજોડ ગુણવત્તા, સુંદર ફેશન અને આકર્ષક કિંમત. ${hasDisc ? `ફ્લેટ ${discText} સ્પેશિયલ ડિસ્કાઉન્ટ ઉપલબ્ધ છે!` : "શ્રેષ્ઠ બ્રાન્ડ વેલ્યુ અને ટકાઉપણું!"} આજે જ પધારો!`;
-      }
-    } else if (langCode === "hi") {
-      if (videoDuration === 5) {
-        template = hasDisc
-          ? `धमाकेदार ${occasion} ऑफर! हमारे प्रीमियम ${item} पर पाइये ${discText} की विशेष छूट। आज ही आएं!`
-          : `शानदार ${occasion} कलेक्शन! हमारे प्रीमियम ${item} के साथ अपना स्टाइल अपग्रेड करें। आज ही पधारें!`;
-      } else if (videoDuration === 15) {
-        template = hasDisc
-          ? `नमस्ते दोस्तों! इस ${occasion} के पावन अवसर पर ${businessType} लेकर आया है धमाकेदार ऑफर। हमारे प्रीमियम ${item} पर पाइये फ्लैट ${discText} की भारी छूट। बेहतरीन स्टाइल, अद्वितीय कम्फर्ट और टिकाऊ क्वालिटी। आज ही आएं और अपना मनपसंद कलेक्शन चुनें!`
-          : `नमस्ते दोस्तों! इस ${occasion} पर ${businessType} पेश करता है एक्सक्लूसिव कलेक्शन। हमारे प्रीमियम ${item} देंगे आपको लाजवाब स्टाइल और पूरा कम्फर्ट। हर कदम पर आत्मविश्वास महसूस करें। आज ही स्टोर पर पधारें या तुरंत ऑनलाइन आर्डर करें!`;
-      } else if (videoDuration === 30) {
-        template = hasDisc
-          ? `नमस्ते दोस्तों! इस ${occasion} अपने त्यौहार को बनाएं और भी खास। ${businessType} लेकर आया है प्रीमियम ${item} का सबसे नया और आकर्षक कलेक्शन, वह भी पूरे ${discText} की महा बचत के साथ! आधुनिक स्टाइल, मजबूत बनावट और बेजोड़ कम्फर्ट का बेहतरीन संगम। यह ऑफर केवल सीमित समय के लिए मान्य है, तो देर किस बात की? आज ही हमारे नजदीकी स्टोर पर आएं या दिए गए नंबर पर तुरंत संपर्क करें!`
-          : `नमस्ते दोस्तों! इस ${occasion} के अवसर पर ${businessType} आपके लिए लाया है नए प्रोडक्ट्स की शानदार रेंज। हमारे प्रीमियम ${item} में आपको मिलेगी असली मजबूती, परफेक्ट कम्फर्ट और लेटेस्ट फैशन का बेजोड़ तालमेल। अपनी पर्सनालिटी को दें एक नया निखार। आज ही हमारे स्टोर पर विजिट करें या व्हाट्सएप पर मैसेज करके अपनी बुकिंग पक्की करें!`;
-      } else {
-        template = `नमस्ते दोस्तों! इस ${occasion} पर ${businessType} की तरफ से ढेर सारी शुभकामनाएं। हमारी प्रीमियम ${item} की रेंज अब खास कीमतों में उपलब्ध है। ${hasDisc ? `पाइये पूरे ${discText} की छूट!` : "उत्कृष्ट क्वालिटी और गारंटीड संतुष्टि!"} आज ही संपर्क करें!`;
-      }
-    } else if (langCode === "ur") {
-      if (videoDuration === 5) {
-        template = hasDisc
-          ? `دھماکے دار ${occasion} آفر! ہمارے پریمیم ${item} پر پائیں ${discText} کی خصوصی رعایت۔ آج ہی تشریف لائیں!`
-          : `شاندار ${occasion} کلیکشن! ہمارے پریمیم ${item} کے ساتھ اپنا نیا انداز اپنائیں۔ آج ہی تشریف لائیں!`;
-      } else if (videoDuration === 15) {
-        template = hasDisc
-          ? `خوش آمدید! اس ${occasion} کے پرمسرت موقع پر ${businessType} لایا ہے اپنے تمام پریمیم ${item} پر فلیٹ ${discText} کی شاندار رعایت! بہترین کوالٹی، دلکش ڈیزائن اور زبردست آرام۔ آج ہی تشریف لائیں اور اس زبردست آفر سے فائدہ اٹھائیں۔`
-          : `خوش آمدید! اس ${occasion} کے موقع پر ${businessType} پیش کرتا ہے پریمیم ${item} کا شاندار نیا کلیکشن۔ بہترین بناوٹ، اعلیٰ پائیداری اور لازوال نفاست۔ آج ہی تشریف لائیں یا فوری رابطہ کریں!`;
-      } else if (videoDuration === 30) {
-        template = hasDisc
-          ? `محترم دوستو! اس ${occasion} اپنے تہوار کو بنائیں اور بھی خاص۔ ${businessType} لے کر آیا ہے پریمیم ${item} کا سب سے نیا اور دلکش کلیکشن، وہ بھی پورے ${discText} کی زبردست بچت کے ساتھ! جدید ترین انداز، مضبوط بناوٹ اور ہر قدم پر لاجواب آرام۔ یہ پیشکش محدود مدت کے لیے ہے، تو دیر نہ کیجئے۔ آج ہی ہمارے قریبی اسٹور پر تشریف لائیں یا واٹس ایپ پر فوری رابطہ کریں!`
-          : `محترم دوستو! اس ${occasion} پر ${businessType} پیش کرتا ہے پریمیم ${item} کا سب سے نیا اور شاندار کلیکشن۔ بے مثال کوالٹی، مضبوط پائیداری اور ہر لمحے میں پرسکون آرام۔ اپنی شخصیت کو دیں ایک نیا اور دلکش نکھار۔ اسٹاک محدود ہے، آج ہی تشریف لائیں یا فوری آن لائن بکنگ کرائیں!`;
-      } else {
-        template = `محترم دوستو! اس ${occasion} کے موقع پر ${businessType} کی طرف سے دلی مبارکباد۔ ہماری پریمیم ${item} کی مکمل رینج اب خصوصی رعایت کے ساتھ دستیاب ہے۔ ${hasDisc ? `پائیں پورے ${discText} کی چھوٹ!` : "اعلیٰ ترین کوالٹی اور پائیداری کی مکمل ضمانت!"} آج ہی تشریف لائیں!`;
-      }
-    } else if (langCode === "ar") {
-      if (videoDuration === 5) {
-        template = hasDisc
-          ? `أقوى عروض ${occasion}! احصل على خصم ${discText} على تشكيلتنا المميزة من ${item}. تفضل بزيارتنا اليوم!`
-          : `تشكيلة ${occasion} الحصرية! ارتقِ بأناقتك مع أرقى تصاميم ${item} من ${businessType}. زورونا اليوم!`;
-      } else if (videoDuration === 15) {
-        template = hasDisc
-          ? `أهلاً بكم! بمناسبة ${occasion} السعيدة، يسر ${businessType} أن يقدم لكم أقوى العروض! خصم حصري يصل إلى ${discText} على تشكيلتنا المميزة من ${item}. جودة استثنائية، راحة فائقة وتصاميم عصرية. تفضلوا بزيارتنا اليوم ولا تفوتوا الفرصة!`
-          : `أهلاً بكم! احتفلوا بـ ${occasion} مع أحدث تشكيلات ${businessType} الفاخرة من ${item}. تصاميم أنيقة تجمع بين الراحة الفائقة والجودة العالية. تفضلوا بزيارتنا اليوم لتكتشفوا التميز والفخامة!`;
-      } else if (videoDuration === 30) {
-        template = hasDisc
-          ? `مرحباً بكم جميعاً! اجعلوا احتفالكم بـ ${occasion} أكثر تميزاً مع ${businessType}! نقدم لكم اليوم أحدث تشكيلاتنا الفاخرة من ${item}، مع خصم خاص ومذهل قدره ${discText} لفترة محدودة! خامات متينة، راحة استثنائية وأناقة لا مثيل لها تلبي تطلعاتكم. الكمية محدودة جداً، سارعوا بزيارة معارضنا اليوم أو اطلبوا مباشرة عبر الواتساب!`
-          : `مرحباً بكم جميعاً! بمناسبة ${occasion} المجيدة، تقدم لكم ${businessType} أرقى تصاميم ${item} العصرية. دقة متناهية في التصنيع، أقمشة وأنسجة فاخرة، وراحة مطلقة طوال اليوم تمنحكم ثقة كاملة في كل خطوة. زوروا أقرب فرع إليكم اليوم أو تواصلوا معنا لطلب تشكيلتكم المفضلة!`;
-      } else {
-        template = `أعزاءنا الكرام! يسعدنا في ${businessType} أن نهنئكم بمناسبة ${occasion}. نقدم لكم تشكيلتنا الكاملة من ${item} بأعلى معايير الجودة العالمية. ${hasDisc ? `استمتعوا بخصم ${discText} الرائع!` : "تصاميم راقية وأسعار مميزة!"} تفضلوا بزيارتنا الآن!`;
-      }
+    const voicePersonaGuidance = isVideo
+      ? `\nVOICE PERSONA & PERFORMANCE SPECIFICATIONS:
+- Voice Actor Gender: ${gender.toUpperCase()}
+- Voice Persona / Actor: ${selectedVoiceObj?.name || (gender === "male" ? "Aarav / Male Voice" : "Swara / Female Voice")}
+- Tone & Delivery: ${gender === "male"
+        ? "Bold, energetic, authoritative masculine commercial cadence with punchy, confident delivery."
+        : "Warm, inviting, vibrant feminine commercial cadence with captivating, friendly delivery."
+      }`
+      : "";
+    const scriptGuidance = isVideo
+      ? `${getScriptPromptGuidance(lang, duration)}${voicePersonaGuidance}`
+      : "";
+
+    // Domain-specific system prompt
+    let systemPrompt = "";
+    if (ctx.domain === "software") {
+      systemPrompt = `You are an expert commercial video director, technology copywriter, and software marketing specialist.
+You create high-converting promotional marketing scripts and video voiceovers for software applications, POS systems, SaaS tools, and digital platforms.
+CRITICAL DOMAIN DIRECTIVE:
+The product being promoted is a SOFTWARE / DIGITAL APPLICATION / TECHNOLOGY SERVICE.
+You must focus exclusively on software capabilities: speed, accuracy, workflow automation, inventory tracking, GST billing, and business efficiency.
+STRICT NEGATIVE CONSTRAINT:
+NEVER generate fashion, clothing, footwear, style, comfort, fabric, sole, or physical collection descriptions. NEVER use phrases like "लाजवाब स्टाइल और पूरा कम्फर्ट", "एक्सक्लूसिव कलेक्शन", "हर कदम पर", or "पहनें".`;
+    } else if (ctx.domain === "footwear") {
+      systemPrompt = `You are an expert commercial footwear marketing copywriter and video director. You create engaging, premium promotional advertisements highlighting footwear design, durability, comfort, and craftsmanship.`;
+    } else if (ctx.domain === "garments") {
+      systemPrompt = `You are an expert commercial fashion and apparel marketing copywriter. You create high-converting promotional advertisements highlighting fabric quality, elegance, design, and styling.`;
     } else {
-      if (videoDuration === 5) {
-        template = hasDisc
-          ? `Unstoppable style! Get flat ${discText} off on premium ${item} this ${occasion}. Shop now!`
-          : `Elevate your look with premium ${item} from ${businessType}. Visit us today!`;
-      } else if (videoDuration === 15) {
-        template = hasDisc
-          ? `Celebrate this ${occasion} in style! ${businessType} brings you an exclusive flat ${discText} discount across our entire premium ${item} collection. Unmatched comfort, trendsetting design, and peak durability. Grab yours today before stock runs out!`
-          : `Discover the art of elegance this ${occasion}! ${businessType} presents our brand new premium ${item} line. Designed for maximum comfort and standout sophistication. Upgrade your daily style today!`;
-      } else {
-        template = hasDisc
-          ? `Step up your presence this ${occasion} with ${businessType}! Enjoy up to ${discText} off on our handcrafted premium collection of ${item}. Engineered for luxurious comfort, superior performance, and effortless elegance. Don't wait—visit our store or order online today to claim your limited-time festive deal!`
-          : `Step into pure sophistication this ${occasion} with ${businessType}! Experience our handcrafted premium collection of ${item}, meticulously designed for timeless appeal and supreme durability. Visit our showroom or message us today to explore the collection!`;
-      }
+      systemPrompt = `You are an expert commercial marketing copywriter specializing in high-converting promotional messages and scripts.`;
     }
+
+    // Dynamic user prompt with strict priority hierarchy
+    const userPrompt = `Generate a high-converting promotional marketing advertisement script and commercial AI image prompt according to the following strict priority hierarchy:
+
+========================================
+PRIORITY 1: CUSTOM INSTRUCTIONS (HIGHEST PRIORITY - ABSOLUTE GROUND TRUTH)
+========================================
+${opts.customPrompt ? opts.customPrompt.trim() : "None provided. Focus on product category and domain."}
+
+CRITICAL RULES FOR CUSTOM INSTRUCTIONS:
+- These custom instructions take absolute precedence over any default business category templates.
+- Preserve EVERY specific product name, feature, and workflow mentioned by the user (e.g. brand name, billing speed, stock tracking, batch numbers, expiry dates, GST, 1-click scanning, auto purchase entry).
+- Do NOT omit or generalize user-specified features.
+
+========================================
+PRIORITY 2: PRODUCT CATEGORY & DOMAIN
+========================================
+Product Category: ${opts.productCategory || "Not specified"}
+Product Domain: ${ctx.domain.toUpperCase()} (TREAT STRICTLY AS ${ctx.domain === "software" ? "SOFTWARE / APPLICATION / TECH SERVICE" : ctx.domain.toUpperCase()})
+${ctx.domain === "software" ? "- IMPORTANT: This is a digital software/application product. DO NOT describe physical wear, shoes, fabric, or fashion style." : ""}
+
+========================================
+PRIORITY 3: BUSINESS TYPE & BRAND IDENTITY
+========================================
+Business / Brand: ${ctx.brandOrProductName || ctx.resolvedBusinessType}
+STRICT RULE: NEVER output the literal word "Other" or "अन्य" anywhere in the advertisement. If the user selected 'Other', use the brand name or product name as the identity.
+
+========================================
+PRIORITY 4: FESTIVAL / OCCASION & PROMOTIONAL CONTEXT
+========================================
+Occasion Context: ${ctx.resolvedOccasion}
+STRICT RULE: ${ctx.isCustomOccasion ? 'The occasion is "Custom" (user-defined). NEVER output the literal phrase "इस Custom पर", "Custom Festival", "Custom Offer", or "Happy Custom". Instead, craft a powerful, professional promotional introduction (e.g., "नमस्ते दोस्तों! पेश है..." or "Attention Business Owners!").' : `Incorporate the ${opts.occasion} festive context naturally.`}
+
+========================================
+PRIORITY 5: DISCOUNT & COMMERCIAL OFFER
+========================================
+${ctx.hasDiscount ? `Offer: Flat ${ctx.discountText} discount available.` : "No discount offer - focus entirely on product features, value, speed, and benefits. Do NOT mention any discount, 0% off, or price drop."}
+
+========================================
+LANGUAGE & OUTPUT FORMAT SPECIFICATIONS
+========================================
+Target Language: ${lang}
+${lang.startsWith("hi") ? `- Language Style: Natural, professional commercial Hindi (Devanagari script).
+- Technical Terminology: Keep industry software terms in their standard natural usage (e.g. TallyBook POS, Pharmacy, Fast Billing, Stock, Batch Number, Expiry Date, GST, 1-Click Scan, Automatic Purchase Bill Entry).
+- Flow: Fluent, confident, and professional sentence structure without broken grammar or random word mixing.` : ""}
+Format: ${isVideo ? `Video Voiceover Script for ${duration}s (${targetWordRule.minWords}-${targetWordRule.maxWords} words)` : "WhatsApp Marketing Message Template"}
+${isVideo ? `Voice Persona: ${gender.toUpperCase()} commercial voice actor\n${scriptGuidance}` : ""}
+
+Format your response EXACTLY as:
+TEMPLATE:
+[Your promotional marketing script here]
+
+IMAGE_PROMPT:
+[Your detailed commercial image generation prompt here matching ${aspectConfig.name}]`;
+
+    return {
+      systemPrompt,
+      userPrompt,
+      resolvedBusinessType: ctx.resolvedBusinessType,
+      resolvedOccasion: ctx.resolvedOccasion,
+      domain: ctx.domain,
+      brandOrProductName: ctx.brandOrProductName,
+    };
   }
 
-  const imagePrompt = `Cinematic 4K promotional commercial video frame featuring ${item} by ${businessType}, ${occasion} visual celebration theme, dramatic studio spotlighting, elegant pedestals, dynamic camera angle, hyper-realistic textures, clean negative space for captions, aspect ratio ${aspectConfig.name}`;
+  function generateSmartFallbackTemplate(opts: {
+    businessType: string;
+    productCategory?: string;
+    discount?: number;
+    occasion: string;
+    customPrompt?: string;
+    isVideo: boolean;
+    videoDuration: VideoDuration;
+    aspectRatio: VideoAspectRatio;
+    language: string;
+    gender: "male" | "female";
+  }): { template: string; imagePrompt: string } {
+    const ctx = resolvePromptContext(opts);
+    const { isVideo, videoDuration, aspectRatio, language } = opts;
+    const langCode = (language || "hi").split("-")[0].toLowerCase();
+    const aspectConfig = VIDEO_ASPECT_RATIOS[aspectRatio] || VIDEO_ASPECT_RATIOS["9:16"];
+    const brandName = ctx.brandOrProductName || "TallyBook POS";
+    const item = ctx.productCategory || ctx.brandOrProductName || (ctx.domain === "software" ? "Pharmacy Application" : "products");
+    const businessName = ctx.resolvedBusinessType;
+    const occasionTitle = ctx.isCustomOccasion ? "" : opts.occasion;
+    const hasDisc = ctx.hasDiscount;
+    const discText = ctx.discountText;
 
-  return { template, imagePrompt };
-}
+    let template = "";
+
+    // DOMAIN 1: SOFTWARE / APPLICATION / POS / PHARMACY APP
+    if (ctx.domain === "software") {
+      if (langCode === "hi") {
+        if (!isVideo || videoDuration === 15) {
+          template = `नमस्ते दोस्तों! पेश है ${brandName} – Pharmacy Stores के लिए एक स्मार्ट Billing और Inventory Management Application।
+
+अब करें Fast Pharmacy Billing, Manage करें Medicine Stock, Batch Number, Expiry Date और GST।
+
+सिर्फ एक क्लिक में Purchase Bill Scan करें और आसानी से Automatic Purchase Entry करें।
+
+अपनी Pharmacy का Billing और Stock Management बनाएं आसान और स्मार्ट।
+
+आज ही ${brandName} अपनाएं!`;
+        } else if (videoDuration === 5) {
+          template = `धमाकेदार ${brandName}! अब Pharmacy Billing और Stock Management करें सिर्फ एक क्लिक में। आज ही अपनाएं!`;
+        } else if (videoDuration === 30) {
+          template = `नमस्ते दोस्तों! क्या आप अपनी फार्मेसी बिलिंग और इन्वेंटरी मैनेजमेंट को लेकर परेशान हैं?
+
+पेश है ${brandName} – Pharmacy Stores के लिए एक ऑल-इन-वन स्मार्ट Billing और Inventory Management Application!
+
+अब करें सुपरफास्ट Pharmacy Billing, आसानी से Manage करें Medicine Stock, Batch Number, Expiry Dates और GST।
+
+सिर्फ एक क्लिक में Purchase Bill Scan करें और Automatic Purchase Bill Entry पाएं।
+
+अपनी फार्मेसी का बिजनेस बनाएं 100% डिजिटल, आसान और तेज।
+
+आज ही संपर्क करें और ${brandName} का फ्री डेमो लें!`;
+        } else {
+          template = `नमस्ते दोस्तों! पेश है ${brandName} – Pharmacy और Medical Stores के लिए भारत का सबसे भरोसेमंद स्मार्ट Billing और Inventory Management Application। अब फास्ट बिलिंग, बैच नंबर, एक्सपायरी ट्रैकिंग और जीएसटी इनवॉइसिंग बनाएं बेहद आसान। सिर्फ एक क्लिक में परचेस बिल स्कैन करें और ऑटोमैटिक एंट्री पाएं। अपनी फार्मेसी को बनाएं स्मार्ट और सफल। आज ही संपर्क करें और फ्री डेमो पाएं!`;
+        }
+      } else if (langCode === "gu") {
+        if (!isVideo || videoDuration === 15) {
+          template = `નમસ્તે મિત્રો! પ્રસ્તુત છે ${brandName} – ફાર્મસી સ્ટોર્સ માટે એક સ્માર્ટ Billing અને Inventory Management Application.
+
+હવે કરો Fast Pharmacy Billing, Manage કરો Medicine Stock, Batch Number, Expiry Date અને GST.
+
+માત્ર એક ક્લિકમાં Purchase Bill Scan કરો અને સરળતાથી Automatic Purchase Entry કરો.
+
+તમારી Pharmacy નું Billing અને Stock Management બનાવો ઝડપી અને સ્માર્ટ.
+
+આજે જ ${brandName} અપનાવો!`;
+        } else if (videoDuration === 5) {
+          template = `ધમાકેદાર ${brandName}! ફાર્મસી બિલિંગ અને સ્ટોક મેનેજમેન્ટ હવે માત્ર એક ક્લિકમાં. આજે જ વસાવો!`;
+        } else {
+          template = `નમસ્તે મિત્રો! પ્રસ્તુત છે ${brandName} – ફાર્મસી સ્ટોર્સ માટે એક સંપૂર્ણ સ્માર્ટ Billing અને Inventory Management સોલ્યુશન. હવે કરો સુપરફાસ્ટ બિલિંગ, મેડિસિન સ્ટોક, બેચ નંબર અને એક્સપાયરી ડેટ ટ્રેકિંગ. સિંગલ ક્લિકમાં પર્ચેઝ બિલ સ્કેન કરો અને આપમેળે એન્ટ્રી કરો. આજે જ ડેમો બુક કરો!`;
+        }
+      } else if (langCode === "ur") {
+        template = `محترم دوستو! پیش ہے ${brandName} – فارمیسی اور میڈیکل اسٹورز کے لیے ایک اسمارٹ بلنگ اور انوینٹری مینجمنٹ ایپلیکیشن۔
+
+اب کریں تیز رفتار فارمیسی بلنگ، میڈیسن اسٹاک، بیچ نمبر، ایکسپائری ڈیٹ اور جی ایس ٹی کا آسان انتظام۔
+
+صرف ایک کلک میں پرچیز بل اسکین کریں اور آٹومیٹک پرچیز انٹری پائیں۔
+
+अपनी فارمیسی کا نظام بنائیں جدید، تیز اور اسمارٹ۔
+
+آج ہی ${brandName} اپنائیں!`;
+      } else if (langCode === "ar") {
+        template = `مرحباً بكم! نقدم لكم ${brandName} – الحل الذكي والمتكامل لإدارة الصيدليات والفواتير والمخزون.
+
+تمتعوا بفواتير صيدلانية فائقة السرعة، إدارة ذكية لمخزون الأدوية، تتبع تواريخ الصلاحية والتشغيلات، وحسابات الضريبة بدقة.
+
+مسح ضوئي لفواتير الشراء بنقرة واحدة مع إدخال تلقائي وسريع.
+
+اجعل إدارة صيدليتك أكثر ذكاءً وسهولة مع ${brandName}!`;
+      } else {
+        template = `Hello everyone! Introducing ${brandName} – the smart Billing & Inventory Management Application for Pharmacy Stores.
+
+Experience Fast Pharmacy Billing, effortlessly manage Medicine Stock, Batch Numbers, Expiry Dates, and GST.
+
+Scan purchase bills with a single click for instant Automatic Purchase Bill Entry.
+
+Make your pharmacy management accurate, efficient, and smart.
+
+Get started with ${brandName} today!`;
+      }
+    }
+    // DOMAIN 2 & 3: FOOTWEAR & GARMENTS & GENERAL
+    else {
+      const introPhraseHi = ctx.isCustomOccasion
+        ? "धमाकेदार स्पेशल ऑफर!"
+        : `इस ${occasionTitle} के पावन अवसर पर`;
+      const greetingHi = ctx.isCustomOccasion
+        ? `नमस्ते दोस्तों! ${businessName} लेकर आया है एक्सक्लूसिव कलेक्शन।`
+        : `नमस्ते दोस्तों! इस ${occasionTitle} पर ${businessName} लेकर आया है धमाकेदार ऑफर।`;
+
+      if (!isVideo) {
+        template = hasDisc
+          ? `🎉 ${ctx.isCustomOccasion ? "Special Exclusive Celebration" : `Special ${occasionTitle} Celebration`}! 🎉\n\nUpgrade your style with premium ${item} from ${businessName}!\n\n✨ Flat ${discText} on our entire collection!\n🚚 Express Delivery & Premium Quality Guaranteed.\n\n👉 Contact us now to claim your exclusive offer!`
+          : `✨ ${ctx.isCustomOccasion ? "Special Showcase" : `Happy ${occasionTitle}`} from ${businessName}! ✨\n\nDiscover our latest collection of ${item}. Crafted for elegance and unparalleled quality.\n\n📍 Visit our store or message us today to explore!`;
+      } else {
+        if (langCode === "hi") {
+          if (videoDuration === 5) {
+            template = hasDisc
+              ? `${introPhraseHi} हमारे प्रीमियम ${item} पर पाइये ${discText} की विशेष छूट। आज ही आएं!`
+              : `शानदार कलेक्शन! हमारे प्रीमियम ${item} के साथ अपना स्टाइल अपग्रेड करें। आज ही पधारें!`;
+          } else if (videoDuration === 15) {
+            template = hasDisc
+              ? `${greetingHi} हमारे प्रीमियम ${item} पर पाइये फ्लैट ${discText} की भारी छूट। बेहतरीन स्टाइल, अद्वितीय कम्फर्ट और टिकाऊ क्वालिटी। आज ही आएं और अपना मनपसंद कलेक्शन चुनें!`
+              : `${greetingHi} हमारे प्रीमियम ${item} देंगे आपको लाजवाब स्टाइल और पूरा कम्फर्ट। हर कदम पर आत्मविश्वास महसूस करें। आज ही स्टोर पर पधारें या तुरंत ऑनलाइन आर्डर करें!`;
+          } else {
+            template = `${greetingHi} हमारे प्रीमियम ${item} में आपको मिलेगी असली मजबूती, परफेक्ट कम्फर्ट और लेटेस्ट फैशन का बेजोड़ तालमेल। अपनी पर्सनालिटी को दें एक नया निखार। आज ही हमारे स्टोर पर विजिट करें या मैसेज करके बुकिंग पक्की करें!`;
+          }
+        } else if (langCode === "gu") {
+          template = `નમસ્તે મિત્રો! ${ctx.isCustomOccasion ? "વિશેષ ઓફર" : `આ ${occasionTitle} પર`} ${businessName} લાવ્યા છે ખાસ ઓફર. અમારા પ્રીમિયમ ${item} પર મેળવો ${hasDisc ? `ફ્લેટ ${discText} ની વિશેષ છૂટ` : "શ્રેષ્ઠ ક્વોલિટી અને ડિઝાઇન"}. આજે જ મુલાકાત લો!`;
+        } else if (langCode === "ur") {
+          template = `خوش آمدید! ${businessName} پیش کرتا ہے پریمیم ${item} کا شاندار نیا کلیکشن۔ ${hasDisc ? `پائیں فلیٹ ${discText} کی رعایت!` : "اعلیٰ معیار اور پائیداری۔"} آج ہی تشریف لائیں!`;
+        } else if (langCode === "ar") {
+          template = `أهلاً بكم! يسر ${businessName} أن يقدم لكم أرقى التشكيلات من ${item}. ${hasDisc ? `خصم حصري يصل إلى ${discText}!` : "جودة استثنائية وأناقة لا مثيل لها."} زورونا اليوم!`;
+        } else {
+          template = `Celebrate with ${businessName}! Discover our handcrafted collection of ${item}. ${hasDisc ? `Enjoy up to ${discText} off for a limited time!` : "Unmatched quality and timeless appeal."} Visit us or order online today!`;
+        }
+      }
+    }
+
+    const imagePrompt = ctx.domain === "software"
+      ? `Modern commercial advertising visual showcasing ${brandName} Pharmacy Billing & Inventory Software, sleek modern tablet interface with glowing digital medicine stock analytics and clean POS billing counters, futuristic teal and medical blue studio lighting, ultra-realistic 4K commercial render, ample negative space for text overlays, aspect ratio ${aspectConfig.name}`
+      : `Cinematic 4K promotional commercial video frame featuring ${item} by ${businessName}, ${ctx.resolvedOccasion} visual celebration theme, dramatic studio spotlighting, elegant pedestals, dynamic camera angle, hyper-realistic textures, clean negative space for captions, aspect ratio ${aspectConfig.name}`;
+
+    return { template, imagePrompt };
+  }
 
   const handleGenerate = async () => {
     if (!formData.businessType || !formData.occasion) {
@@ -1238,27 +1520,26 @@ function generateSmartFallbackTemplate(opts: {
     }
 
     const isVideo = contentType === "video";
-    const selectedVoiceObj = SUPPORTED_VOICES.find((v) => v.id === selectedVoiceId);
-    const voicePersonaGuidance = isVideo
-      ? `\nVOICE PERSONA & PERFORMANCE SPECIFICATIONS:
-- Voice Actor Gender: ${voiceGender.toUpperCase()}
-- Voice Persona / Actor: ${selectedVoiceObj?.name || (voiceGender === "male" ? "Aarav / Male Voice" : "Swara / Female Voice")}
-- Tone & Delivery: ${
-          voiceGender === "male"
-            ? "Bold, energetic, authoritative masculine commercial cadence with punchy, confident delivery."
-            : "Warm, inviting, vibrant feminine commercial cadence with captivating, friendly delivery."
-        }`
-      : "";
-    const scriptGuidance = isVideo
-      ? `${getScriptPromptGuidance(voiceoverLanguage, videoDuration)}${voicePersonaGuidance}`
-      : "";
-    const aspectConfig = VIDEO_ASPECT_RATIOS[videoAspectRatio];
-    const targetWordRule = VIDEO_DURATIONS.find((d) => d.duration === videoDuration) || VIDEO_DURATIONS[1];
-
     setIsGenerating(true);
+
     try {
       let generatedTemplate = "";
       let generatedImagePrompt = "";
+
+      // Construct dynamic prioritized prompt
+      const dynamicPrompt = buildDynamicAiPrompt({
+        businessType: formData.businessType,
+        productCategory: formData.productCategory,
+        discount: formData.discount[0],
+        occasion: formData.occasion,
+        customPrompt: formData.customPrompt,
+        isVideo,
+        videoDuration,
+        aspectRatio: videoAspectRatio,
+        language: voiceoverLanguage,
+        gender: voiceGender,
+        selectedVoiceId,
+      });
 
       if (textProvider === "nvidia") {
         try {
@@ -1267,81 +1548,12 @@ function generateSmartFallbackTemplate(opts: {
               ? `Generating ${videoDuration}s video script & frame prompt with NVIDIA Nemotron...`
               : "Generating marketing template with NVIDIA Nemotron Reasoning..."
           );
-          const systemPrompt = isVideo
-            ? `You are an expert commercial video director, multilingual copywriter, and voiceover producer.
-You create high-converting promotional video voiceover scripts optimized for social media marketing (Instagram Reels, YouTube Shorts, TikTok, Facebook).
-You craft voiceover scripts specifically tailored for ${voiceGender === "male" ? "an energetic, confident, authoritative commercial male voice persona" : "a warm, vibrant, engaging commercial female voice persona"}.
-You strictly follow target timing, word counts, and genuine native language scripts.`
-            : `You are an expert Indian marketing copywriter specializing in WhatsApp Business marketing. 
-You create engaging, festive, and culturally relevant marketing messages optimized for Indian audiences.
-Your messages are concise, use emojis appropriately, and include clear call-to-actions.
-Always maintain a professional yet friendly tone.`;
-
-          const hasDiscount = formData.discount[0] > 0;
-          const userPrompt = isVideo
-            ? `Create a promotional marketing video voiceover script and video background frame image prompt for:
-
-Business Type: ${formData.businessType}
-Product Category: ${formData.productCategory || "General products"}
-${hasDiscount ? `Discount: ${formData.discount[0]}% OFF` : "No discount offer - focus on brand awareness and product showcase"}
-Occasion: ${formData.occasion}
-${formData.customPrompt ? `Additional Instructions: ${formData.customPrompt}` : ""}
-
-VIDEO TIMING, VOICE PERSONA & LANGUAGE SPECIFICATIONS:
-- Video Duration: ${videoDuration} Seconds
-- Video Aspect Ratio: ${aspectConfig.name} (${aspectConfig.width}x${aspectConfig.height})
-- Script Target Word Count: EXACTLY ${targetWordRule.minWords} to ${targetWordRule.maxWords} words.
-${scriptGuidance}
-
-Please provide:
-1. A video promo voiceover script (TEMPLATE) formatted strictly according to the exact duration, word count, native script, and voice persona (${voiceGender} voice actor).
-2. An AI image prompt (IMAGE_PROMPT) for a cinematic commercial video background frame matching ${aspectConfig.name} (${aspectConfig.width}x${aspectConfig.height}).
-
-Format your response exactly as:
-TEMPLATE:
-[Your video promo voiceover script here]
-
-IMAGE_PROMPT:
-[Your detailed video frame image prompt here]`
-            : `Create a WhatsApp marketing message and promotional poster image prompt for:
-
-Business Type: ${formData.businessType}
-Product Category: ${formData.productCategory || "General products"}
-${hasDiscount ? `Discount: ${formData.discount[0]}% OFF` : "No discount offer - focus on brand awareness and product showcase"}
-Occasion: ${formData.occasion}
-${formData.customPrompt ? `Additional Instructions: ${formData.customPrompt}` : ""}
-
-Please provide:
-1. A WhatsApp message template (max 500 characters) with:
-   - Festive greeting appropriate for ${formData.occasion}
-   ${hasDiscount ? "- Clear discount offer" : "- Focus on product quality and brand value"}
-   - Urgency element
-   - Call-to-action
-   - Relevant emojis
-
-2. A professional commercial image prompt for an AI image generator (FLUX / Midjourney style):
-   - Subject: Vibrant commercial product photography or 3D promotional visual for ${formData.businessType} (${formData.productCategory || "products"})
-   - Atmosphere: Festive visual theme matching ${formData.occasion} with elegant decorative elements (e.g., golden accents, warm ambient lighting, festive background)
-   - Style: High-end commercial advertisement, studio lighting, hyper-realistic, 8k resolution, clean composition
-   - STRICT RULES FOR IMAGE PROMPT:
-     * Describe VISUAL objects, materials, and lighting — NOT mobile app screens or paragraphs of chat messages.
-     * DO NOT ask the AI to draw entire phone UI chat screens, chat bubbles, or paragraphs of text (this causes distorted alien gibberish).
-     ${hasDiscount ? `* Include a bold, elegant badge with "${formData.discount[0]}% OFF".` : "* ABSOLUTELY NO DISCOUNT, NO 0% OFF, and NO price badges."}
-     * Include ample clean negative space for professional text overlays.
-     * Format as a single flowing descriptive paragraph without markdown asterisks or bullet points.
-
-Format your response exactly as:
-TEMPLATE:
-[Your WhatsApp message here]
-
-IMAGE_PROMPT:
-[Your detailed image generation prompt here]`;
 
           const res = await generateNvidiaChatCompletion({
             model: "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
             messages: [
-              { role: "system", content: systemPrompt },
-              { role: "user", content: userPrompt },
+              { role: "system", content: dynamicPrompt.systemPrompt },
+              { role: "user", content: dynamicPrompt.userPrompt },
             ],
             temperature: 0.6,
             maxTokens: 4096,
@@ -1354,8 +1566,8 @@ IMAGE_PROMPT:
           const template = templateMatch ? templateMatch[1].trim() : text;
           const rawImagePrompt = imagePromptMatch ? imagePromptMatch[1].trim() : text;
           const imagePrompt = optimizeMarketingImagePrompt(rawImagePrompt, {
-            businessType: formData.businessType,
-            occasion: formData.occasion,
+            businessType: dynamicPrompt.resolvedBusinessType,
+            occasion: dynamicPrompt.resolvedOccasion,
             discount: formData.discount[0],
           });
 
@@ -1369,20 +1581,19 @@ IMAGE_PROMPT:
 
       if (!generatedTemplate) {
         try {
+          // Allow up to 35 seconds for Google Gemini / cloud edge function
           const timeoutPromise = new Promise<{ data: null }>((resolve) =>
-            setTimeout(() => resolve({ data: null }), 8000)
+            setTimeout(() => resolve({ data: null }), 35000)
           );
           const response = await Promise.race([
             supabase.functions.invoke("generate-template", {
               body: {
-                type: "marketing_template",
-                businessType: formData.businessType,
+                type: isVideo ? "video_template" : "marketing_template",
+                businessType: dynamicPrompt.resolvedBusinessType,
                 productCategory: formData.productCategory,
                 discount: formData.discount[0],
-                occasion: formData.occasion,
-                customPrompt: isVideo
-                  ? `CRITICAL FORMAT: Create a high-converting ${videoDuration}s promotional marketing VIDEO VOICEOVER SCRIPT and a CINEMATIC VIDEO BACKGROUND FRAME PROMPT.\n${scriptGuidance}${formData.customPrompt ? `\nAdditional Instructions: ${formData.customPrompt}` : ""}`
-                  : formData.customPrompt,
+                occasion: dynamicPrompt.resolvedOccasion,
+                customPrompt: dynamicPrompt.userPrompt,
                 textProvider: textProvider === "nvidia" ? "gemini" : textProvider,
                 videoDuration,
                 videoAspectRatio,
@@ -1578,92 +1789,92 @@ IMAGE_PROMPT:
         }
       } finally {
         setIsGeneratingImage(false);
-    }
-    return;
-  }
-
-  if (imageProvider === "nvidia") {
-    try {
-      toast.info("Generating image with NVIDIA FLUX...");
-      const result = await generateNvidiaImage({
-        prompt: currentPrompt,
-        model: "flux-3-image-klein",
-        width: 1024,
-        height: 1024,
-        steps: 25,
-      });
-
-      if (result.imageUrl) {
-        setGeneratedContent((prev) => ({
-          ...prev,
-          generatedImage: result.imageUrl,
-        }));
-        toast.success("Image generated successfully with NVIDIA FLUX!");
-        setIsGeneratingImage(false);
-        return;
       }
-    } catch (nvidiaErr: any) {
-      console.warn("NVIDIA FLUX direct generation encountered issue, attempting high-speed FLUX fallback:", nvidiaErr);
-      toast.info("NVIDIA NIM server busy. Falling back to high-speed FLUX generation...");
+      return;
+    }
+
+    if (imageProvider === "nvidia") {
       try {
-        const { width, height } = getPollinationsDimensions();
-        const fallbackRes = await generatePollinationsImage({
+        toast.info("Generating image with NVIDIA FLUX...");
+        const result = await generateNvidiaImage({
           prompt: currentPrompt,
-          model: "flux",
-          width,
-          height,
-          endpoint: pollinationsEndpoint,
-          seed: createPollinationsSeed(),
-          apiKey: pollinationsApiKey || null,
+          model: "flux-3-image-klein",
+          width: 1024,
+          height: 1024,
+          steps: 25,
         });
-        if (fallbackRes.imageUrl) {
+
+        if (result.imageUrl) {
           setGeneratedContent((prev) => ({
             ...prev,
-            generatedImage: fallbackRes.imageUrl,
+            generatedImage: result.imageUrl,
           }));
-          toast.success("Image generated successfully via FLUX!");
+          toast.success("Image generated successfully with NVIDIA FLUX!");
           setIsGeneratingImage(false);
           return;
         }
-      } catch {
-        toast.error(`NVIDIA FLUX generation error: ${nvidiaErr?.message || "Unknown error"}`);
+      } catch (nvidiaErr: any) {
+        console.warn("NVIDIA FLUX direct generation encountered issue, attempting high-speed FLUX fallback:", nvidiaErr);
+        toast.info("NVIDIA NIM server busy. Falling back to high-speed FLUX generation...");
+        try {
+          const { width, height } = getPollinationsDimensions();
+          const fallbackRes = await generatePollinationsImage({
+            prompt: currentPrompt,
+            model: "flux",
+            width,
+            height,
+            endpoint: pollinationsEndpoint,
+            seed: createPollinationsSeed(),
+            apiKey: pollinationsApiKey || null,
+          });
+          if (fallbackRes.imageUrl) {
+            setGeneratedContent((prev) => ({
+              ...prev,
+              generatedImage: fallbackRes.imageUrl,
+            }));
+            toast.success("Image generated successfully via FLUX!");
+            setIsGeneratingImage(false);
+            return;
+          }
+        } catch {
+          toast.error(`NVIDIA FLUX generation error: ${nvidiaErr?.message || "Unknown error"}`);
+          setIsGeneratingImage(false);
+          return;
+        }
+      }
+    }
+
+    if (imageProvider === "pexels") {
+      try {
+        toast.info("Finding high-resolution commercial stock photo on Pexels...");
+        const pexelsRes = await supabase.functions.invoke("pexels-search", {
+          body: { query: currentPrompt.trim(), kind: "photo" },
+        });
+        if (pexelsRes.error) throw pexelsRes.error;
+        if (pexelsRes.data?.imageUrl) {
+          setGeneratedContent(prev => ({
+            ...prev,
+            generatedImage: pexelsRes.data.imageUrl,
+          }));
+          toast.success("Stock photo found on Pexels!");
+          setIsGeneratingImage(false);
+          return;
+        }
+      } catch (err: any) {
+        toast.error(`Pexels photo search failed: ${err.message || "Unknown error"}`);
         setIsGeneratingImage(false);
         return;
       }
     }
-  }
 
-  if (imageProvider === "pexels") {
     try {
-      toast.info("Finding high-resolution commercial stock photo on Pexels...");
-      const pexelsRes = await supabase.functions.invoke("pexels-search", {
-        body: { query: currentPrompt.trim(), kind: "photo" },
+      const response = await supabase.functions.invoke("generate-template", {
+        body: {
+          type: "generate_image",
+          imagePrompt: currentPrompt,
+          imageProvider,
+        },
       });
-      if (pexelsRes.error) throw pexelsRes.error;
-      if (pexelsRes.data?.imageUrl) {
-        setGeneratedContent(prev => ({
-          ...prev,
-          generatedImage: pexelsRes.data.imageUrl,
-        }));
-        toast.success("Stock photo found on Pexels!");
-        setIsGeneratingImage(false);
-        return;
-      }
-    } catch (err: any) {
-      toast.error(`Pexels photo search failed: ${err.message || "Unknown error"}`);
-      setIsGeneratingImage(false);
-      return;
-    }
-  }
-
-  try {
-    const response = await supabase.functions.invoke("generate-template", {
-      body: {
-        type: "generate_image",
-        imagePrompt: currentPrompt,
-        imageProvider,
-      },
-    });
 
       if (response.data?.error) {
         toast.error(`${providerName} failed: ${response.data.error}`);
@@ -1737,11 +1948,10 @@ IMAGE_PROMPT:
           <button
             key={id}
             onClick={() => setContentType(id)}
-            className={`flex flex-col items-center gap-2 rounded-lg border-2 p-4 transition-colors ${
-              contentType === id
+            className={`flex flex-col items-center gap-2 rounded-lg border-2 p-4 transition-colors ${contentType === id
                 ? "border-primary bg-primary/10 text-primary"
                 : "border-border bg-card text-muted-foreground hover:border-primary/50"
-            }`}
+              }`}
           >
             <Icon className="h-6 w-6" />
             <span className="font-semibold text-sm">{label}</span>
@@ -1874,11 +2084,10 @@ IMAGE_PROMPT:
                         key={dur.duration}
                         type="button"
                         onClick={() => setVideoDuration(dur.duration)}
-                        className={`rounded-md border px-2 py-1.5 text-xs font-medium transition-colors ${
-                          videoDuration === dur.duration
+                        className={`rounded-md border px-2 py-1.5 text-xs font-medium transition-colors ${videoDuration === dur.duration
                             ? "border-primary bg-primary text-primary-foreground shadow-sm"
                             : "border-border bg-card hover:border-primary/50 text-muted-foreground"
-                        }`}
+                          }`}
                       >
                         {dur.duration}s
                       </button>
@@ -1902,11 +2111,10 @@ IMAGE_PROMPT:
                           key={ratioKey}
                           type="button"
                           onClick={() => setVideoAspectRatio(ratioKey)}
-                          className={`flex flex-col items-center gap-0.5 rounded-md border p-2 text-xs transition-colors ${
-                            videoAspectRatio === ratioKey
+                          className={`flex flex-col items-center gap-0.5 rounded-md border p-2 text-xs transition-colors ${videoAspectRatio === ratioKey
                               ? "border-primary bg-primary/10 text-primary font-semibold"
                               : "border-border bg-card text-muted-foreground hover:border-primary/50"
-                          }`}
+                            }`}
                         >
                           <span className="font-mono text-xs">{cfg.id}</span>
                           <span className="text-[10px] opacity-75">{cfg.width}×{cfg.height}</span>
@@ -1949,22 +2157,20 @@ IMAGE_PROMPT:
                         <button
                           type="button"
                           onClick={() => handleGenderChange("female")}
-                          className={`rounded border py-1 text-xs font-medium ${
-                            voiceGender === "female"
+                          className={`rounded border py-1 text-xs font-medium ${voiceGender === "female"
                               ? "border-primary bg-primary/15 text-primary"
                               : "border-border text-muted-foreground"
-                          }`}
+                            }`}
                         >
                           Female
                         </button>
                         <button
                           type="button"
                           onClick={() => handleGenderChange("male")}
-                          className={`rounded border py-1 text-xs font-medium ${
-                            voiceGender === "male"
+                          className={`rounded border py-1 text-xs font-medium ${voiceGender === "male"
                               ? "border-primary bg-primary/15 text-primary"
                               : "border-border text-muted-foreground"
-                          }`}
+                            }`}
                         >
                           Male
                         </button>
@@ -2149,11 +2355,10 @@ IMAGE_PROMPT:
                             key={lang.id}
                             type="button"
                             onClick={() => handleVideoLanguageRemix(lang.id)}
-                            className={`rounded px-1.5 py-0.5 text-[10px] font-medium transition-colors border ${
-                              voiceoverLanguage === lang.id
+                            className={`rounded px-1.5 py-0.5 text-[10px] font-medium transition-colors border ${voiceoverLanguage === lang.id
                                 ? "border-primary bg-primary text-primary-foreground font-semibold"
                                 : "border-border bg-card text-muted-foreground hover:border-primary/50"
-                            }`}
+                              }`}
                           >
                             {lang.nativeName}
                           </button>
@@ -2237,13 +2442,12 @@ IMAGE_PROMPT:
                             });
                           }
                         }}
-                        className={`relative flex flex-col items-start gap-1 rounded-lg border p-3 text-left transition-colors ${
-                          imageProvider === id
+                        className={`relative flex flex-col items-start gap-1 rounded-lg border p-3 text-left transition-colors ${imageProvider === id
                             ? "border-primary bg-primary/10 ring-1 ring-primary/40 shadow-sm"
                             : isAvailable
                               ? "border-border hover:border-primary/50"
                               : "border-border hover:border-amber-500/50 bg-muted/20"
-                        }`}
+                          }`}
                       >
                         <div className="flex items-center gap-2 w-full">
                           <span className="text-sm font-medium">{label}</span>
@@ -2339,28 +2543,28 @@ IMAGE_PROMPT:
                     </div>
                     {nvidiaResults && (
                       <>
-                      <ul className="space-y-1.5">
-                        {nvidiaResults.map((result) => (
-                          <li key={result.id} className="flex items-start justify-between gap-2">
-                            <div>
-                              <p className="font-mono text-[11px]">{result.label}</p>
-                              <p className="text-[10px] text-muted-foreground">{result.reason}</p>
-                            </div>
-                            <Badge variant={result.access === "granted" ? "default" : "destructive"} className={result.access === "granted" ? "bg-success" : ""}>
-                              {result.access === "granted" ? "Access" : "No Access"}
-                            </Badge>
-                          </li>
-                        ))}
-                      </ul>
-                      {hasNvidiaFluxAccess(nvidiaResults) ? (
-                        <p className="text-[11px] text-emerald-600 dark:text-emerald-400 font-medium pt-1">
-                          ✓ Primary model (flux.1-schnell) is active and ready to generate images.
-                        </p>
-                      ) : (
-                        <p className="text-[10px] text-muted-foreground pt-1">
-                          Image generation will automatically use Pollinations AI fallback when NVIDIA models are unavailable.
-                        </p>
-                      )}
+                        <ul className="space-y-1.5">
+                          {nvidiaResults.map((result) => (
+                            <li key={result.id} className="flex items-start justify-between gap-2">
+                              <div>
+                                <p className="font-mono text-[11px]">{result.label}</p>
+                                <p className="text-[10px] text-muted-foreground">{result.reason}</p>
+                              </div>
+                              <Badge variant={result.access === "granted" ? "default" : "destructive"} className={result.access === "granted" ? "bg-success" : ""}>
+                                {result.access === "granted" ? "Access" : "No Access"}
+                              </Badge>
+                            </li>
+                          ))}
+                        </ul>
+                        {hasNvidiaFluxAccess(nvidiaResults) ? (
+                          <p className="text-[11px] text-emerald-600 dark:text-emerald-400 font-medium pt-1">
+                            ✓ Primary model (flux.1-schnell) is active and ready to generate images.
+                          </p>
+                        ) : (
+                          <p className="text-[10px] text-muted-foreground pt-1">
+                            Image generation will automatically use Pollinations AI fallback when NVIDIA models are unavailable.
+                          </p>
+                        )}
                       </>
                     )}
                   </div>
@@ -2428,7 +2632,7 @@ IMAGE_PROMPT:
                 className="font-mono text-sm"
                 placeholder="Type your image prompt here directly, or use 'Generate Template' to auto-generate one. e.g., 'Diwali sale poster for jewelry store, 50% off, festive gold and red theme'"
               />
-              
+
               {/* Generation Debug (development only - never shows API keys) */}
               {import.meta.env.DEV && imageDebug && (
                 <div className="space-y-3 rounded-lg border border-dashed border-primary/40 bg-muted/30 p-3">
@@ -2549,7 +2753,7 @@ IMAGE_PROMPT:
                   </div>
                 </div>
               )}
-              
+
               {generatedContent.generatedImage && !isGeneratingImage && (
                 <div className="space-y-3">
                   <div className="flex items-center justify-between">
@@ -2565,8 +2769,8 @@ IMAGE_PROMPT:
                     )}
                   </div>
                   <div className="relative rounded-lg overflow-hidden border bg-black/5 max-h-[360px] flex items-center justify-center">
-                    <img 
-                      src={generatedContent.generatedImage} 
+                    <img
+                      src={generatedContent.generatedImage}
                       alt={contentType === "video" ? "Video background frame" : "Generated promotional poster"}
                       className="max-h-[360px] w-auto object-contain mx-auto"
                     />
