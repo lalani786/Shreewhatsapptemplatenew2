@@ -434,19 +434,16 @@ export async function createPromoVideoWithAudio(opts: PromoVideoAudioOptions): P
     recorder.onerror = () => safeReject(new Error("Video recording failed"));
 
     recorder.start(250);
-    const totalFrames = Math.floor((targetDurMs / 1000) * fps);
-    let frame = 0;
     const startTime = performance.now();
 
     const renderFrame = () => {
       const elapsed = performance.now() - startTime;
-      if (elapsed >= targetDurMs || frame >= totalFrames) {
+      if (elapsed >= targetDurMs) {
         try { recorder.stop(); } catch { /* ignore */ }
         return;
       }
       const progress = Math.min(1, elapsed / targetDurMs);
       drawFrame(ctx, mediaSource, width, height, progress, text, isRTL);
-      frame++;
       requestAnimationFrame(renderFrame);
     };
     renderFrame();

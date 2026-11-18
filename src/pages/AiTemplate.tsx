@@ -135,7 +135,12 @@ interface PollinationsAbResult {
 }
 
 /** Controlled dimensions for the Pollinations request (no provider defaults). */
-function getPollinationsDimensions(platform?: string): { width: number; height: number; aspectRatio: string } {
+function getPollinationsDimensions(platform?: string, videoAspect?: VideoAspectRatio): { width: number; height: number; aspectRatio: string } {
+  if (videoAspect) {
+    if (videoAspect === "16:9") return { width: 1920, height: 1080, aspectRatio: "16:9" };
+    if (videoAspect === "9:16") return { width: 1080, height: 1920, aspectRatio: "9:16" };
+    return { width: 1080, height: 1080, aspectRatio: "1:1" };
+  }
   const landscape = platform === "facebook" || platform === "linkedin" || platform === "x";
   return landscape
     ? { width: 1536, height: 1024, aspectRatio: "3:2" }
@@ -490,6 +495,30 @@ export default function AiTemplate() {
     toast.info(`Voice persona changed to ${newGender === "male" ? "Male" : "Female"}`);
   };
 
+  const handleAspectRatioChange = (newRatio: VideoAspectRatio) => {
+    setVideoAspectRatio(newRatio);
+    // Synchronize aspect ratio in imagePrompt if already generated
+    setGeneratedContent((prev) => {
+      if (!prev.imagePrompt) return prev;
+      let updated = prev.imagePrompt;
+      const newCfg = VIDEO_ASPECT_RATIOS[newRatio];
+      const newLabel = `${newCfg.label} (${newCfg.width}x${newCfg.height})`;
+
+      const oldRatios = ["16:9", "9:16", "1:1"];
+      for (const r of oldRatios) {
+        const rRegex = new RegExp(`aspect ratio\\s*:?\\s*${r}[^,\\.\\n]*`, "gi");
+        updated = updated.replace(rRegex, `aspect ratio ${newLabel}`);
+        const rRegex2 = new RegExp(`\\b${r}\\b\\s*(Landscape|Portrait|Square)?\\s*(widescreen|vertical)?\\s*(\\(\\d+x\\d+\\))?`, "gi");
+        updated = updated.replace(rRegex2, newLabel);
+      }
+      if (!updated.includes(newCfg.id)) {
+        updated += `, aspect ratio ${newLabel}`;
+      }
+      return { ...prev, imagePrompt: updated };
+    });
+    toast.info(`Aspect ratio switched to ${VIDEO_ASPECT_RATIOS[newRatio].name}`);
+  };
+
   const handlePreviewVoiceover = async () => {
     const text = (videoVoiceoverText || generatedContent.template || "").trim();
     if (!text) {
@@ -762,48 +791,151 @@ export default function AiTemplate() {
     };
   }
 
+  function buildDomainImagePrompt(opts: {
+    domain: "software" | "footwear" | "garments" | "general";
+    brandOrProductName?: string;
+    productCategory?: string;
+    businessType?: string;
+    occasion?: string;
+    isCustomOccasion?: boolean;
+    aspectRatio: VideoAspectRatio;
+    hasDiscount?: boolean;
+    discountText?: string;
+  }): string {
+    const aspectConfig = VIDEO_ASPECT_RATIOS[opts.aspectRatio] || VIDEO_ASPECT_RATIOS["9:16"];
+    const brandName = opts.brandOrProductName || "TallyBook POS";
+    const ratioLabel = `${aspectConfig.label} (${aspectConfig.width}x${aspectConfig.height})`;
+
+    if (opts.domain === "software") {
+      return [
+        `Professional photorealistic commercial advertisement photography for ${brandName} Pharmacy Management Software.`,
+        `Setting: Modern Indian retail pharmacy store interior with neatly organized glass medicine shelves, authentic branded medicine cartons, blister packs, and syrup bottles.`,
+        `Subjects & Action: Professional Indian pharmacist in clean formal attire at the modern retail billing counter, operating a desktop computer and tablet POS terminal. Handheld laser barcode scanner actively scanning a medicine package at the counter.`,
+        `Workflow Concept: Organized purchase invoice papers, medicine stock management clipboard, and clean digital billing station.`,
+        `Atmosphere & Palette: Modern medical blue, clean crisp white, and subtle healthcare mint green color palette. Bright balanced commercial pharmacy lighting, natural reflections, sharp textures, high depth of field.`,
+        `Composition: Premium commercial product photography with ample clean negative space in the upper and center sections for promotional text overlays. Aspect ratio: ${ratioLabel}.`,
+        `STRICT NEGATIVE RESTRICTIONS: Absolutely NO festive golden curtains, NO decorative fabrics, NO floating fantasy holographic icons, NO fake unreadable gibberish text, NO shoes, NO footwear, NO clothing, NO fashion accessories. Do NOT burn Hindi or text into the image.`
+      ].join(" ");
+    }
+
+    if (opts.domain === "footwear") {
+      const item = opts.productCategory || "Footwear";
+      return [
+        `High-end commercial studio product photography showcasing premium ${item} by ${brandName}.`,
+        `Setting: Minimalist contemporary studio pedestal with dramatic cinematic rim lighting and polished reflective floor.`,
+        `Details: Ultra-detailed footwear craftsmanship, rich material texture, precision stitching, clean sole ergonomics, dynamic 45-degree hero angle.`,
+        `Atmosphere & Palette: Elegant commercial lighting with soft gradients and realistic contact shadows.`,
+        `Composition: Clean negative space for marketing text and price badges. Aspect ratio: ${ratioLabel}.`,
+        `STRICT NEGATIVE RESTRICTIONS: NO cluttered backgrounds, NO deformed geometry, NO random text.`
+      ].join(" ");
+    }
+
+    if (opts.domain === "garments") {
+      const item = opts.productCategory || "Apparel";
+      return [
+        `Luxury commercial fashion advertisement photography showcasing ${item} by ${brandName}.`,
+        `Setting: High-end boutique showroom or minimalist editorial studio with elegant architectural lines.`,
+        `Details: Premium garment craftsmanship, rich fabric textures, natural drape, sophisticated apparel presentation.`,
+        `Atmosphere & Palette: Soft diffused studio illumination, warm elegant tones, subtle natural contrast.`,
+        `Composition: Clean negative space for promotional headlines. Aspect ratio: ${ratioLabel}.`
+      ].join(" ");
+    }
+
+    return [
+      `Cinematic 4K commercial promotional advertisement visual featuring ${brandName}.`,
+      `Setting: High-end commercial studio environment with elegant pedestal and professional multi-point lighting.`,
+      `Atmosphere: Crisp commercial lighting, vivid natural colors, realistic shadows, premium product photography.`,
+      `Composition: Clean composition with ample negative space for text overlays. Aspect ratio: ${ratioLabel}.`
+    ].join(" ");
+  }
+
+  function buildDomainVideoMotionPrompt(opts: {
+    domain: "software" | "footwear" | "garments" | "general";
+    brandOrProductName?: string;
+    productCategory?: string;
+    businessType?: string;
+    occasion?: string;
+    isCustomOccasion?: boolean;
+    aspectRatio: VideoAspectRatio;
+    durationSeconds?: VideoDuration;
+    customPrompt?: string;
+  }): string {
+    const aspectConfig = VIDEO_ASPECT_RATIOS[opts.aspectRatio] || VIDEO_ASPECT_RATIOS["9:16"];
+    const brandName = opts.brandOrProductName || "TallyBook POS";
+    const duration = opts.durationSeconds || 15;
+    const ratioLabel = `${aspectConfig.id} (${aspectConfig.width}x${aspectConfig.height})`;
+
+    if (opts.domain === "software") {
+      return [
+        `Cinematic dynamic commercial video advertisement background demonstrating ${brandName} in a modern Indian retail pharmacy store. Ultra-high definition 4K commercial cinematography, aspect ratio ${ratioLabel}, duration ${duration} seconds.`,
+        `MULTI-SCENE MOTION SEQUENCE:`,
+        `Scene 1 (Store Opening & Aisle Pan): Smooth cinematic camera dolly movement gliding through modern Indian pharmacy aisles with organized medicine racks, panning smoothly toward the well-lit billing counter.`,
+        `Scene 2 (Fast Barcode Billing): Pharmacist holding a laser barcode scanner, scanning a medicine box with a crisp red laser line, smoothly demonstrating fast retail pharmacy billing workflow.`,
+        `Scene 3 (Stock & Batch Management): Camera tracks across medicine inventory shelves showing organized medicine cartons, batch numbers, and stock management organization.`,
+        `Scene 4 (Expiry Date Tracking): Clear view of billing counter desktop and tablet interface displaying expiry date management, batch verification, and inventory control.`,
+        `Scene 5 (1-Click Purchase Scan): Demonstration of 1-click purchase bill scanning where physical purchase invoice is scanned into digital automated purchase bill entry.`,
+        `Scene 6 (Hero Branding & Counter Shot): Wide cinematic hero shot of the pharmacy billing counter with clean counter space and dedicated upper negative space for ${brandName} branding and animated title overlays.`,
+        `MOTION DIRECTIVES:`,
+        `- Camera Movement: Continuous dynamic motion with smooth dolly forward, sweeping panning shots across medicine shelves, and close-up tracking shots of barcode scanning.`,
+        `- Pharmacist Hand Movements: Realistic natural hand actions picking up medicine packs, scanning barcodes, and tapping POS touchscreen.`,
+        `- Lighting & Cinematography: Ambient pharmacy store lighting with clean medical illumination, soft depth of field bokeh, and subtle motion blur for cinematic realism.`,
+        `- Frame Continuity: Continuous multi-frame video motion throughout the entire ${duration}s runtime with zero static freeze frames.`,
+        `BACKGROUND RESTRICTIONS:`,
+        `- Clean modern Indian retail pharmacy environment with authentic medicine shelves, blister packs, and syrup bottles.`,
+        `- Palette: Professional medical blue, clean white, and subtle healthcare green.`,
+        `- Strict Restrictions: Absolutely NO gibberish fake text on screens or walls, NO floating holographic fantasy icons, NO festive golden curtains or decorative fabrics, NO shoes, NO footwear, NO clothing. Clean negative space in upper third for superimposed text. DO NOT burn Hindi text into the background video.`
+      ].join(" ");
+    }
+
+    if (opts.domain === "footwear") {
+      const item = opts.productCategory || "Footwear";
+      return [
+        `Cinematic commercial video advertisement featuring premium ${item} by ${brandName}. Ultra-high definition 4K commercial cinematography, aspect ratio ${ratioLabel}.`,
+        `MOTION DIRECTIVES:`,
+        `- Continuous 360-degree turntable product rotation showcasing side profile, sole grip, stitching, and premium silhouette.`,
+        `- Cinematic camera choreography: Dynamic slow zoom-in with smooth dolly tracking and orbital sweeping camera movement around the footwear.`,
+        `- Lighting & Shadows: Moving commercial studio spotlight illumination, soft specular reflections gliding across leather and mesh surfaces, realistic shifting contact shadows.`,
+        `- Atmospheric Motion: Subtle floating ambient particles, shallow depth of field bokeh transitions.`,
+        `- Product Preservation: Strict product identity lock—preserve authentic footwear design, materials, and logo without warping or distortion.`,
+        `- Zero static freeze frames; continuous fluid motion throughout ${duration}s runtime.`
+      ].join(" ");
+    }
+
+    if (opts.domain === "garments") {
+      const item = opts.productCategory || "Apparel";
+      return [
+        `Cinematic luxury fashion commercial video featuring ${item} by ${brandName}. Aspect ratio ${ratioLabel}.`,
+        `MOTION DIRECTIVES:`,
+        `- Smooth sweeping camera glide across elegant garment racks, close-up tracking of premium fabric weave and texture.`,
+        `- Subtle natural fabric movement with gentle dynamic lighting shifts.`,
+        `- Clean composition with ample negative space for text overlays. Continuous motion throughout ${duration}s runtime.`
+      ].join(" ");
+    }
+
+    return [
+      `Cinematic 4K commercial advertisement video featuring ${brandName}. Aspect ratio ${ratioLabel}.`,
+      `Smooth camera dolly movement, dynamic commercial studio lighting, realistic reflections and continuous video motion throughout ${duration}s runtime.`
+    ].join(" ");
+  }
+
   const buildDynamicMotionPrompt = (customUserPrompt?: string): string => {
-    const parts: string[] = [];
     const ctx = resolvePromptContext({
       businessType: formData.businessType,
       productCategory: formData.productCategory,
       occasion: formData.occasion,
       customPrompt: customUserPrompt || formData.customPrompt,
     });
-    const subject = ctx.brandOrProductName || formData.productCategory || ctx.resolvedBusinessType;
-    const occasion = ctx.resolvedOccasion;
-
-    parts.push(`Google Flow cinematic commercial advertisement video showcasing ${subject} for ${occasion}.`);
-
-    const details = customUserPrompt || generatedContent.imagePrompt || "";
-    if (details.trim()) {
-      parts.push(`Product identity & construction details: ${details.trim()}.`);
-    }
-
-    if (ctx.domain === "software") {
-      parts.push(
-        "Cinematic Camera Choreography: Smooth dolly and pan movements showcasing a modern glowing digital tablet interface, dynamic animated pharmacy billing metrics, floating holographic inventory graphs, and interactive UI dashboard elements.",
-        "Lighting & Shadows: Subtle tech studio lighting with futuristic teal and cyan illumination, realistic soft screen glow, and clean minimalist workspace ambiance.",
-        "Product Preservation: Strict software interface lock—preserve clean typography, medical billing layouts, and professional dashboard styling with zero distortion.",
-        "Ultra high framerate, photorealistic 4K commercial advertisement quality with fluid continuous multi-frame motion."
-      );
-    } else {
-      // Physical product / footwear / garments
-      parts.push(
-        "Cinematic Camera Choreography: Continuous 360-degree turntable product rotation revealing multi-angle details, textures, side profile, and premium craftsmanship.",
-        "Dynamic slow zoom-in with smooth dolly tracking and orbital sweeping camera movement around the product.",
-        "Lighting & Shadows: Moving commercial studio spotlight illumination, soft specular reflections gliding across product surfaces, realistic contact shadows shifting along the ground plane.",
-        "Atmospheric Motion: Subtle floating ambient dust particles, gentle atmospheric haze with shallow depth of field bokeh transitions.",
-        "Product Preservation: Strict product identity lock—preserve authentic silhouette, color scheme, materials, and brand logo with zero warping or distortion.",
-        "Ultra high framerate, photorealistic 4K commercial advertisement quality with fluid continuous multi-frame motion."
-      );
-    }
-
-    if (formData.customPrompt?.trim()) {
-      parts.push(`Creative directives: ${formData.customPrompt.trim()}`);
-    }
-
-    return parts.join(" ");
+    return buildDomainVideoMotionPrompt({
+      domain: ctx.domain,
+      brandOrProductName: ctx.brandOrProductName,
+      productCategory: ctx.productCategory,
+      businessType: ctx.resolvedBusinessType,
+      occasion: ctx.resolvedOccasion,
+      isCustomOccasion: ctx.isCustomOccasion,
+      aspectRatio: videoAspectRatio,
+      durationSeconds: videoDuration,
+      customPrompt: customUserPrompt || formData.customPrompt,
+    });
   };
 
   const generateRealAnimatedVideo = async (options: {
@@ -1355,7 +1487,20 @@ TEMPLATE:
 [Your promotional marketing script here]
 
 IMAGE_PROMPT:
-[Your detailed commercial image generation prompt here matching ${aspectConfig.name}]`;
+[Your detailed commercial ${isVideo ? "video background frame prompt" : "promotional image prompt"} here strictly matching aspect ratio ${aspectConfig.label} (${aspectConfig.width}x${aspectConfig.height}).
+${ctx.domain === "software"
+  ? `CRITICAL SOFTWARE / PHARMACY SPECIFICATIONS:
+- Setting: Modern Indian retail pharmacy store interior with neatly organized medicine shelves, blister packs, syrup bottles.
+- Subjects: Pharmacist at billing counter using desktop/tablet and laser barcode scanner scanning medicine packaging.
+- Workflow: Fast pharmacy billing, purchase bills, medicine stock management.
+- Palette: Modern medical blue, clean white, subtle green.
+${isVideo ? `- Multi-scene motion sequence: Scene 1: Smooth camera movement through pharmacy aisles to billing counter. Scene 2: Barcode scanner scanning medicine package. Scene 3: Medicine inventory shelves, stock boxes, batch numbers. Scene 4: Expiry date management & inventory verification. Scene 5: 1-click purchase bill scan to digital entry. Scene 6: Billing counter hero shot with software branding space.` : ""}
+- STRICT RESTRICTIONS: NO golden curtains, NO decorative fabrics, NO floating fantasy holographic icons, NO fake unreadable text, NO shoes/footwear, NO fashion clothing. Leave clean negative space in upper third for superimposed text. DO NOT burn Hindi text into the image.`
+  : `CRITICAL PRODUCT SPECIFICATIONS:
+- Subject: Premium commercial visual for ${ctx.brandOrProductName || opts.businessType} (${opts.productCategory || "products"}).
+- Setting & Lighting: High-end commercial studio lighting, elegant pedestal, clean composition.
+- Leave clean negative space for marketing text overlay.`
+}]`;
 
     return {
       systemPrompt,
@@ -1506,9 +1651,29 @@ Get started with ${brandName} today!`;
       }
     }
 
-    const imagePrompt = ctx.domain === "software"
-      ? `Modern commercial advertising visual showcasing ${brandName} Pharmacy Billing & Inventory Software, sleek modern tablet interface with glowing digital medicine stock analytics and clean POS billing counters, futuristic teal and medical blue studio lighting, ultra-realistic 4K commercial render, ample negative space for text overlays, aspect ratio ${aspectConfig.name}`
-      : `Cinematic 4K promotional commercial video frame featuring ${item} by ${businessName}, ${ctx.resolvedOccasion} visual celebration theme, dramatic studio spotlighting, elegant pedestals, dynamic camera angle, hyper-realistic textures, clean negative space for captions, aspect ratio ${aspectConfig.name}`;
+    const imagePrompt = isVideo
+      ? buildDomainVideoMotionPrompt({
+          domain: ctx.domain,
+          brandOrProductName: ctx.brandOrProductName,
+          productCategory: ctx.productCategory,
+          businessType: ctx.resolvedBusinessType,
+          occasion: ctx.resolvedOccasion,
+          isCustomOccasion: ctx.isCustomOccasion,
+          aspectRatio,
+          durationSeconds: videoDuration,
+          customPrompt: opts.customPrompt,
+        })
+      : buildDomainImagePrompt({
+          domain: ctx.domain,
+          brandOrProductName: ctx.brandOrProductName,
+          productCategory: ctx.productCategory,
+          businessType: ctx.resolvedBusinessType,
+          occasion: ctx.resolvedOccasion,
+          isCustomOccasion: ctx.isCustomOccasion,
+          aspectRatio,
+          hasDiscount: ctx.hasDiscount,
+          discountText: ctx.discountText,
+        });
 
     return { template, imagePrompt };
   }
@@ -1634,6 +1799,44 @@ Get started with ${brandName} today!`;
         }
       }
 
+      // Ensure generatedImagePrompt strictly adheres to domain rules and selected aspect ratio
+      const promptCtx = resolvePromptContext({
+        businessType: formData.businessType,
+        productCategory: formData.productCategory,
+        occasion: formData.occasion,
+        customPrompt: formData.customPrompt,
+      });
+
+      if (!generatedImagePrompt || promptCtx.domain === "software") {
+        const containsForbiddenArtifacts = /curtain|fabric|shoe|footwear|sneaker|dress|garment|holographic/i.test(generatedImagePrompt);
+        const missingPharmacyContext = !/pharmacy|medicine|billing|stock|tally|pos/i.test(generatedImagePrompt);
+        if (containsForbiddenArtifacts || missingPharmacyContext || !generatedImagePrompt) {
+          generatedImagePrompt = isVideo
+            ? buildDomainVideoMotionPrompt({
+                domain: promptCtx.domain,
+                brandOrProductName: promptCtx.brandOrProductName,
+                productCategory: promptCtx.productCategory,
+                businessType: promptCtx.resolvedBusinessType,
+                occasion: promptCtx.resolvedOccasion,
+                isCustomOccasion: promptCtx.isCustomOccasion,
+                aspectRatio: videoAspectRatio,
+                durationSeconds: videoDuration,
+                customPrompt: formData.customPrompt,
+              })
+            : buildDomainImagePrompt({
+                domain: promptCtx.domain,
+                brandOrProductName: promptCtx.brandOrProductName,
+                productCategory: promptCtx.productCategory,
+                businessType: promptCtx.resolvedBusinessType,
+                occasion: promptCtx.resolvedOccasion,
+                isCustomOccasion: promptCtx.isCustomOccasion,
+                aspectRatio: videoAspectRatio,
+                hasDiscount: promptCtx.hasDiscount,
+                discountText: promptCtx.discountText,
+              });
+        }
+      }
+
       setGeneratedContent({
         template: generatedTemplate,
         imagePrompt: generatedImagePrompt,
@@ -1676,7 +1879,7 @@ Get started with ${brandName} today!`;
       return;
     }
 
-    const { width, height } = getPollinationsDimensions();
+    const { width, height } = getPollinationsDimensions(undefined, contentType === "video" ? videoAspectRatio : undefined);
     const seed = createPollinationsSeed(); // same seed for both models -> fair comparison
     setIsComparingModels(true);
     setAbResults([]);
@@ -1750,7 +1953,7 @@ Get started with ${brandName} today!`;
     // no enhance=true, no stale React state, and no fallback to other providers.
     if (imageProvider === "pollinations") {
       const promptToGenerate = currentPrompt;
-      const { width, height } = getPollinationsDimensions();
+      const { width, height } = getPollinationsDimensions(undefined, contentType === "video" ? videoAspectRatio : undefined);
 
       setImageDebug(null);
       try {
@@ -1799,8 +2002,8 @@ Get started with ${brandName} today!`;
         const result = await generateNvidiaImage({
           prompt: currentPrompt,
           model: "flux-3-image-klein",
-          width: 1024,
-          height: 1024,
+          width: contentType === "video" ? VIDEO_ASPECT_RATIOS[videoAspectRatio].width : 1024,
+          height: contentType === "video" ? VIDEO_ASPECT_RATIOS[videoAspectRatio].height : 1024,
           steps: 25,
         });
 
@@ -1817,7 +2020,7 @@ Get started with ${brandName} today!`;
         console.warn("NVIDIA FLUX direct generation encountered issue, attempting high-speed FLUX fallback:", nvidiaErr);
         toast.info("NVIDIA NIM server busy. Falling back to high-speed FLUX generation...");
         try {
-          const { width, height } = getPollinationsDimensions();
+          const { width, height } = getPollinationsDimensions(undefined, contentType === "video" ? videoAspectRatio : undefined);
           const fallbackRes = await generatePollinationsImage({
             prompt: currentPrompt,
             model: "flux",
@@ -2110,7 +2313,7 @@ Get started with ${brandName} today!`;
                         <button
                           key={ratioKey}
                           type="button"
-                          onClick={() => setVideoAspectRatio(ratioKey)}
+                          onClick={() => handleAspectRatioChange(ratioKey)}
                           className={`flex flex-col items-center gap-0.5 rounded-md border p-2 text-xs transition-colors ${videoAspectRatio === ratioKey
                               ? "border-primary bg-primary/10 text-primary font-semibold"
                               : "border-border bg-card text-muted-foreground hover:border-primary/50"

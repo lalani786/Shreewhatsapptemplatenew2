@@ -287,7 +287,7 @@ export async function convertWebmToMp4(
     onProgress?.(96, "Finalizing MP4 file...");
     const data = await ffmpeg.readFile(outputName);
     const mp4Uint8 = typeof data === "string" ? new TextEncoder().encode(data) : data;
-    const mp4Blob = new Blob([mp4Uint8.buffer], { type: "video/mp4" });
+    const mp4Blob = new Blob([mp4Uint8.buffer as ArrayBuffer], { type: "video/mp4" });
     const finalFile = new File([mp4Blob], originalName, { type: "video/mp4" });
 
     onProgress?.(100, "Video successfully converted to MP4!");

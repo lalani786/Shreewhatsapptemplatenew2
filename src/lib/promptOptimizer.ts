@@ -40,12 +40,21 @@ export function optimizeMarketingImagePrompt(
   );
   prompt = prompt.replace(
     /chat\s*bubbles?\s*(with\s*messages?|conversation)?/gi,
-    "floating glowing holographic icons"
+    "clean digital badge indicators"
   );
   prompt = prompt.replace(
     /paragraphs?\s*of\s*(chat\s*)?text/gi,
     "clean minimalist layout"
   );
+  prompt = prompt.replace(/floating glowing holographic icons/gi, "clean digital interface elements");
+
+  // Remove irrelevant festive decorations (curtains, fabrics) if software/pharmacy is detected
+  if (/pharmacy|software|billing|tally|pos|inventory|medical|application/i.test(prompt + " " + (opts?.businessType || ""))) {
+    prompt = prompt.replace(/\b(golden|silk|decorative)\s*curtains?\b/gi, "");
+    prompt = prompt.replace(/\bdecorative\s*fabrics?\b/gi, "");
+    prompt = prompt.replace(/\bfestive\s*golden\s*accents?\b/gi, "");
+    prompt = prompt.replace(/\bholographic\b/gi, "digital");
+  }
 
   // 5. Clean up extra punctuation, newlines, and bullet spacing
   prompt = prompt

@@ -147,19 +147,17 @@ export async function createPromoVideo({
 
     recorder.start();
 
-    const fps = 30;
-    const totalFrames = Math.floor((durationMs / 1000) * fps);
-    let frame = 0;
+    const startTime = performance.now();
 
     const renderFrame = () => {
-      if (frame >= totalFrames) {
-        recorder.stop();
+      const elapsed = performance.now() - startTime;
+      if (elapsed >= durationMs) {
+        try { recorder.stop(); } catch { /* ignore */ }
         return;
       }
 
-      const progress = frame / totalFrames;
+      const progress = Math.min(1, elapsed / durationMs);
       drawFrame(ctx, mediaSource, width, height, progress, text, zoomIntensity, isRTL);
-      frame++;
       requestAnimationFrame(renderFrame);
     };
 
