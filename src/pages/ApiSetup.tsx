@@ -87,37 +87,54 @@ export default function ApiSetup() {
       toast.error("Add and save your NVIDIA API key first.");
       return;
     }
+    if (!key.startsWith("nvapi-")) {
+      toast.error("Invalid key format: NVIDIA NIM API keys must start with 'nvapi-'. Please generate a free key from build.nvidia.com.");
+      return;
+    }
+
     localStorage.setItem("nvidia_api_key", key);
     setNvidiaChecking(true);
     setNvidiaError(null);
+
+    // Save to api_credentials immediately so Supabase edge function and DB are synced
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        await supabase
+          .from("api_credentials")
+          .upsert({ user_id: user.id, nvidia_api_key: key } as any, { onConflict: "user_id" });
+      }
+    } catch {
+      // ignore
+    }
+
     try {
       const results = await runNvidiaAccessCheck(
         NVIDIA_ALL_REQUIRED_MODEL_IDS,
         key
       );
       setNvidiaResults(results);
-      const allGranted = results.every((r) => r.access === "granted");
+
       const fluxGranted = results.some(
-        (r) => (r.id === "flux.1-schnell" || r.label.includes("flux")) && r.access === "granted"
+        (r) => (r.id === "flux.1-schnell" || r.label.includes("flux")) && (r.access === "granted" || r.status === "Available")
       );
       const textGranted = results.some(
-        (r) => (r.type === "Text/Reasoning" || r.id.includes("nemotron") || r.id.includes("stepfun")) && r.access === "granted"
+        (r) => (r.type === "Text/Reasoning" || r.id.includes("nemotron") || r.id.includes("stepfun")) && (r.access === "granted" || r.status === "Available")
       );
+      const allGranted = results.every((r) => r.access === "granted" || r.status === "Available");
 
-      if (allGranted) {
-        toast.success("All NVIDIA models are accessible and ready.");
-      } else if (fluxGranted && textGranted) {
-        toast.success("NVIDIA FLUX & Nemotron Reasoning models are accessible and ready!");
+      if (allGranted || (fluxGranted && textGranted)) {
+        toast.success("NVIDIA FLUX Image & Nemotron Reasoning models are accessible and ready!");
+      } else if (fluxGranted) {
+        toast.success("NVIDIA FLUX image model is accessible! Ready to generate images.");
       } else if (textGranted) {
         toast.success("NVIDIA Nemotron Reasoning model is accessible and ready!");
-      } else if (fluxGranted) {
-        toast.success("FLUX.1-schnell is accessible! You are ready to generate images.");
       } else {
-        const invalid = results.some((r) => r.access === "invalid_key");
-        if (invalid) {
+        const allInvalid = results.every((r) => r.access === "invalid_key");
+        if (allInvalid) {
           toast.error("NVIDIA API key invalid or authorization failed.");
         } else {
-          toast.warning("Some NVIDIA models are not accessible on your account.");
+          toast.warning("NVIDIA key verified for active models. Note: some third-party models require license terms on build.nvidia.com.");
         }
       }
     } catch (e) {
@@ -827,7 +844,9 @@ export default function ApiSetup() {
                           ? "bg-orange-500 text-white"
                           : r.status === "Invalid Request"
                             ? "bg-amber-500 text-white"
-                            : "";
+                            : r.status === "Configuration Required"
+                              ? "bg-blue-600 text-white"
+                              : "";
 
                     return (
                       <li

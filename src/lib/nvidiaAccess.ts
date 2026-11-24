@@ -41,7 +41,7 @@ export function hasNvidiaFluxAccess(results: NvidiaModelAccess[]): boolean {
       (r.id === "flux-3-image-klein" ||
         r.id === "flux.1-schnell" ||
         r.label.toLowerCase().includes("flux")) &&
-      r.access === "granted",
+      (r.access === "granted" || r.status === "Available"),
   );
 }
 
@@ -49,19 +49,19 @@ export function hasNvidiaImageAccess(results: NvidiaModelAccess[]): boolean {
   return results.some(
     (r) =>
       (r.type === "Image" || r.id === "flux.1-schnell" || r.label.toLowerCase().includes("flux")) &&
-      r.access === "granted",
+      (r.access === "granted" || r.status === "Available"),
   );
 }
 
 export function hasNvidiaVideoAccess(results: NvidiaModelAccess[]): boolean {
-  return results.some((r) => r.type === "Video" && r.access === "granted");
+  return results.some((r) => r.type === "Video" && (r.access === "granted" || r.status === "Available"));
 }
 
 export function hasNvidiaTextAccess(results: NvidiaModelAccess[]): boolean {
   return results.some(
     (r) =>
-      (r.type === "Text/Reasoning" || r.id === "nemotron-3-nano-omni" || r.label.includes("nemotron")) &&
-      r.access === "granted",
+      (r.type === "Text/Reasoning" || r.id === "nemotron-3-nano-omni" || r.label.includes("nemotron") || r.id.includes("stepfun")) &&
+      (r.access === "granted" || r.status === "Available"),
   );
 }
 
