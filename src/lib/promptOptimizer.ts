@@ -49,11 +49,16 @@ export function optimizeMarketingImagePrompt(
   prompt = prompt.replace(/floating glowing holographic icons/gi, "clean digital interface elements");
 
   // Remove irrelevant festive decorations (curtains, fabrics) if software/pharmacy is detected
-  if (/pharmacy|software|billing|tally|pos|inventory|medical|application/i.test(prompt + " " + (opts?.businessType || ""))) {
+  if (/pharmacy|software|billing|tally|pos|inventory|medical|application|whatsapp|marketing|shree/i.test(prompt + " " + (opts?.businessType || ""))) {
     prompt = prompt.replace(/\b(golden|silk|decorative)\s*curtains?\b/gi, "");
     prompt = prompt.replace(/\bdecorative\s*fabrics?\b/gi, "");
     prompt = prompt.replace(/\bfestive\s*golden\s*accents?\b/gi, "");
     prompt = prompt.replace(/\bholographic\b/gi, "digital");
+  }
+
+  // Purge accidental pharmacy/medicine terms from WhatsApp/SaaS marketing app prompts
+  if (/whatsapp|social\s*media|shree\s*template|marketing\s*app|saas/i.test(prompt + " " + (opts?.businessType || ""))) {
+    prompt = prompt.replace(/\b(pharmacy|pharmacist|medicine\s*shelves|medicine\s*boxes|blister\s*packs|medical\s*stores?|syrup\s*bottles?)\b/gi, "");
   }
 
   // 5. Clean up extra punctuation, newlines, and bullet spacing

@@ -698,6 +698,7 @@ export default function AiTemplate() {
 
   interface PromptContextResolution {
     domain: "software" | "footwear" | "garments" | "general";
+    softwareKind?: "marketing_app" | "pharmacy" | "general_saas";
     brandOrProductName: string;
     productCategory: string;
     resolvedBusinessType: string;
@@ -715,50 +716,144 @@ export default function AiTemplate() {
     customPrompt?: string;
     discount?: number;
   }): PromptContextResolution {
-    const customLower = (opts.customPrompt || "").toLowerCase();
-    const categoryLower = (opts.productCategory || "").toLowerCase();
-    const businessLower = (opts.businessType || "").toLowerCase();
+    const customRaw = (opts.customPrompt || "").trim();
+    const customLower = customRaw.toLowerCase();
+    const categoryRaw = (opts.productCategory || "").trim();
+    const categoryLower = categoryRaw.toLowerCase();
+    const businessRaw = (opts.businessType || "").trim();
+    const businessLower = businessRaw.toLowerCase();
 
-    // Priority 1: Check Custom Instructions for domain indicators
+    // Priority 1: Check Custom Instructions and Category for domain and software subcategory
     let domain: "software" | "footwear" | "garments" | "general" = "general";
-    if (SOFTWARE_KEYWORDS.some((kw) => customLower.includes(kw) || categoryLower.includes(kw))) {
+    let softwareKind: "marketing_app" | "pharmacy" | "general_saas" | undefined = undefined;
+
+    const MARKETING_APP_KEYWORDS = [
+      "whatsapp marketing", "whatsapp", "social media post", "social media", "shree template",
+      "post app", "marketing app", "bulk whatsapp", "bulk messenger", "poster maker",
+      "campaign app", "social media app", "template app", "marketing software", "poster app"
+    ];
+
+    const PHARMACY_KEYWORDS = [
+      "pharmacy app", "medical software", "pharmacy store", "chemist", "medical store",
+      "pharmacy billing", "medicine stock", "pharmacy", "medicine", "chemist shop",
+      "prescription", "blister pack", "tallybook pos", "tally book pos", "purchase bill entry"
+    ];
+
+    const GENERAL_SOFTWARE_KEYWORDS = [
+      "software", "app", "application", "pos", "billing", "inventory", "accounting",
+      "erp", "crm", "saas", "dashboard", "portal", "system", "fintech", "cloud software",
+      "gst billing", "tally"
+    ];
+
+    // Priority 1: Custom Instructions (Absolute ground truth)
+    if (MARKETING_APP_KEYWORDS.some((kw) => customLower.includes(kw))) {
       domain = "software";
-    } else if (FOOTWEAR_KEYWORDS.some((kw) => customLower.includes(kw) || categoryLower.includes(kw) || businessLower.includes(kw))) {
+      softwareKind = "marketing_app";
+    } else if (PHARMACY_KEYWORDS.some((kw) => customLower.includes(kw))) {
+      domain = "software";
+      softwareKind = "pharmacy";
+    } else if (FOOTWEAR_KEYWORDS.some((kw) => customLower.includes(kw))) {
       domain = "footwear";
-    } else if (GARMENT_KEYWORDS.some((kw) => customLower.includes(kw) || categoryLower.includes(kw) || businessLower.includes(kw))) {
+    } else if (GARMENT_KEYWORDS.some((kw) => customLower.includes(kw))) {
       domain = "garments";
-    } else if (businessLower.includes("footwear")) {
+    } else if (GENERAL_SOFTWARE_KEYWORDS.some((kw) => customLower.includes(kw))) {
+      domain = "software";
+      softwareKind = "general_saas";
+    }
+    // Priority 2: Product Category
+    else if (MARKETING_APP_KEYWORDS.some((kw) => categoryLower.includes(kw))) {
+      domain = "software";
+      softwareKind = "marketing_app";
+    } else if (PHARMACY_KEYWORDS.some((kw) => categoryLower.includes(kw))) {
+      domain = "software";
+      softwareKind = "pharmacy";
+    } else if (FOOTWEAR_KEYWORDS.some((kw) => categoryLower.includes(kw))) {
+      domain = "footwear";
+    } else if (GARMENT_KEYWORDS.some((kw) => categoryLower.includes(kw))) {
+      domain = "garments";
+    } else if (GENERAL_SOFTWARE_KEYWORDS.some((kw) => categoryLower.includes(kw))) {
+      domain = "software";
+      softwareKind = "general_saas";
+    }
+    // Priority 3: Business Type
+    else if (businessLower.includes("footwear")) {
       domain = "footwear";
     } else if (businessLower.includes("clothing") || businessLower.includes("garment")) {
       domain = "garments";
+    } else if (businessLower.includes("pharmacy") || businessLower.includes("medical")) {
+      domain = "software";
+      softwareKind = "pharmacy";
+    } else if (SOFTWARE_KEYWORDS.some((kw) => businessLower.includes(kw))) {
+      domain = "software";
+      softwareKind = "general_saas";
     }
 
-    // Extract brand or product name
+    // Extract brand or product name (Priority: Custom Instructions -> Category -> Business Type)
     let brandOrProductName = "";
-    const tallyMatch = (opts.customPrompt || "").match(/\b(tally\s*book\s*pos|tallybook\s*pos|tallybook|tally\s*pos)\b/i);
-    if (tallyMatch) {
+    if (customLower.includes("shree template")) {
+      brandOrProductName = "Shree Template";
+    } else if (customLower.includes("tallybook") || customLower.includes("tally book")) {
       brandOrProductName = "TallyBook POS";
-    } else if (opts.productCategory && opts.productCategory.trim() && opts.productCategory.toLowerCase() !== "other") {
-      brandOrProductName = opts.productCategory.trim();
+    } else {
+      const customBrandMatch = customRaw.match(/\b([A-Z][a-zA-Z0-9]+(?:\s+[A-Z][a-zA-Z0-9]+)?)\s+(?:for|app|software|pos|billing|solutions)/i);
+      if (customBrandMatch && customBrandMatch[1] && !/^(the|our|this|new|best|top|all)$/i.test(customBrandMatch[1])) {
+        brandOrProductName = customBrandMatch[1];
+      } else if (categoryRaw && categoryLower !== "other") {
+        brandOrProductName = categoryRaw;
+      } else if (businessRaw && businessLower !== "other") {
+        brandOrProductName = businessRaw;
+      }
     }
 
-    // Extract software features to highlight from customPrompt
+    if (!brandOrProductName) {
+      if (softwareKind === "marketing_app") {
+        brandOrProductName = "Shree Template";
+      } else if (softwareKind === "pharmacy") {
+        brandOrProductName = "Pharmacy Management";
+      } else if (domain === "software") {
+        brandOrProductName = "Smart Software Solutions";
+      } else if (domain === "footwear") {
+        brandOrProductName = "Premium Footwear";
+      } else if (domain === "garments") {
+        brandOrProductName = "Exclusive Fashion";
+      } else {
+        brandOrProductName = "Exclusive Store";
+      }
+    }
+
+    // Extract features to highlight according to identified domain
     const featuresToHighlight: string[] = [];
-    if (opts.customPrompt) {
-      if (/pharmacy\s*billing/i.test(opts.customPrompt)) featuresToHighlight.push("Fast Pharmacy Billing");
-      if (/stock/i.test(opts.customPrompt)) featuresToHighlight.push("Medicine Stock Management");
-      if (/batch/i.test(opts.customPrompt)) featuresToHighlight.push("Batch Number Management");
-      if (/expiry/i.test(opts.customPrompt)) featuresToHighlight.push("Expiry Date Tracking");
-      if (/gst/i.test(opts.customPrompt)) featuresToHighlight.push("GST Billing");
-      if (/scan|1\s*click/i.test(opts.customPrompt)) featuresToHighlight.push("1-Click Purchase Bill Scanning");
-      if (/purchase.*entry|purchase.*bill/i.test(opts.customPrompt)) featuresToHighlight.push("Automatic Purchase Bill Entry");
+    if (softwareKind === "marketing_app") {
+      featuresToHighlight.push("WhatsApp Marketing Campaigns");
+      featuresToHighlight.push("1-Click Social Media Post Creation");
+      featuresToHighlight.push("Ready-to-Use Business Templates");
+      featuresToHighlight.push("Creative Image & Video Previews");
+      featuresToHighlight.push("Instant Customer Reach");
+      featuresToHighlight.push("Modern Marketing Automation");
+    } else if (softwareKind === "pharmacy") {
+      featuresToHighlight.push("Fast Pharmacy Billing");
+      featuresToHighlight.push("Medicine Stock Management");
+      featuresToHighlight.push("Batch Number Management");
+      featuresToHighlight.push("Expiry Date Tracking");
+      featuresToHighlight.push("GST Billing");
+      featuresToHighlight.push("1-Click Purchase Bill Scanning");
+      featuresToHighlight.push("Automatic Purchase Bill Entry");
+    } else if (domain === "software") {
+      featuresToHighlight.push("Cloud Dashboard & Real-Time Analytics");
+      featuresToHighlight.push("Workflow Automation");
+      featuresToHighlight.push("Instant Business Speed");
+      featuresToHighlight.push("Multi-Device Cloud Access");
     }
 
     // Business Type resolution - NEVER use literal "Other"
-    let resolvedBusinessType = (opts.businessType || "").trim();
+    let resolvedBusinessType = businessRaw;
     if (resolvedBusinessType.toLowerCase() === "other" || !resolvedBusinessType) {
-      if (domain === "software") {
-        resolvedBusinessType = brandOrProductName || (opts.productCategory ? `${opts.productCategory} Solutions` : "Smart Software Solutions");
+      if (softwareKind === "marketing_app") {
+        resolvedBusinessType = `${brandOrProductName} Application`;
+      } else if (softwareKind === "pharmacy") {
+        resolvedBusinessType = `${brandOrProductName} Solutions`;
+      } else if (domain === "software") {
+        resolvedBusinessType = `${brandOrProductName} Solutions`;
       } else if (domain === "footwear") {
         resolvedBusinessType = "Premium Footwear Store";
       } else if (domain === "garments") {
@@ -780,8 +875,9 @@ export default function AiTemplate() {
 
     return {
       domain,
+      softwareKind,
       brandOrProductName,
-      productCategory: (opts.productCategory || "").trim(),
+      productCategory: categoryRaw,
       resolvedBusinessType,
       resolvedOccasion,
       isCustomOccasion,
@@ -793,6 +889,7 @@ export default function AiTemplate() {
 
   function buildDomainImagePrompt(opts: {
     domain: "software" | "footwear" | "garments" | "general";
+    softwareKind?: "marketing_app" | "pharmacy" | "general_saas";
     brandOrProductName?: string;
     productCategory?: string;
     businessType?: string;
@@ -803,23 +900,47 @@ export default function AiTemplate() {
     discountText?: string;
   }): string {
     const aspectConfig = VIDEO_ASPECT_RATIOS[opts.aspectRatio] || VIDEO_ASPECT_RATIOS["9:16"];
-    const brandName = opts.brandOrProductName || "TallyBook POS";
     const ratioLabel = `${aspectConfig.label} (${aspectConfig.width}x${aspectConfig.height})`;
 
     if (opts.domain === "software") {
+      if (opts.softwareKind === "marketing_app") {
+        const brandName = opts.brandOrProductName || "Shree Template";
+        return [
+          `Professional commercial SaaS application marketing poster visual for ${brandName} - WhatsApp Marketing & Social Media Post App.`,
+          `Main Subject: Modern high-end smartphone mockup prominently displaying the ${brandName} application interface with colorful WhatsApp messaging campaigns, social media poster maker tools, and creative templates.`,
+          `Visual Elements: Floating clean preview cards showcasing professional social media post templates, attractive promotional poster designs, WhatsApp marketing campaign metrics, and creative image and video marketing previews. Clean modern software dashboard UI in the background with subtle digital marketing workspace aesthetics.`,
+          `Typography & Composition: Bold elegant headline "${brandName}" with subheadline "WhatsApp Marketing & Social Media Post App", clean visual hierarchy, ample negative space for text overlays.`,
+          `Atmosphere & Palette: Vibrant emerald green, deep tech purple, cyan, and clean white accents. Crisp studio lighting, soft glassmorphism shadows, photorealistic 8k commercial quality, realistic smartphone reflections. Aspect ratio: ${ratioLabel}.`,
+          `STRICT RESTRICTIONS: Absolutely NO pharmacy, NO pharmacist, NO medical store, NO medicines, NO hospital, NO golden curtains, NO fabric drape, NO shoes, NO garments. Do NOT burn Hindi script into the background visual.`
+        ].join(" ");
+      }
+
+      if (opts.softwareKind === "pharmacy") {
+        const brandName = opts.brandOrProductName || "TallyBook POS";
+        return [
+          `Professional photorealistic commercial advertisement photography for ${brandName} Pharmacy Management Software.`,
+          `Setting: Modern Indian retail pharmacy store interior with neatly organized glass medicine shelves, authentic branded medicine cartons, blister packs, and syrup bottles.`,
+          `Subjects & Action: Professional Indian pharmacist in clean formal attire at the modern retail billing counter, operating a desktop computer and tablet POS terminal. Handheld laser barcode scanner actively scanning a medicine package at the counter.`,
+          `Workflow Concept: Organized purchase invoice papers, medicine stock management clipboard, and clean digital billing station.`,
+          `Atmosphere & Palette: Modern medical blue, clean crisp white, and subtle healthcare mint green color palette. Bright balanced commercial pharmacy lighting, natural reflections, sharp textures, high depth of field.`,
+          `Composition: Premium commercial product photography with ample clean negative space in the upper and center sections for promotional text overlays. Aspect ratio: ${ratioLabel}.`,
+          `STRICT NEGATIVE RESTRICTIONS: Absolutely NO festive golden curtains, NO decorative fabrics, NO floating fantasy holographic icons, NO fake unreadable gibberish text, NO shoes, NO footwear, NO clothing, NO fashion accessories. Do NOT burn Hindi or text into the image.`
+        ].join(" ");
+      }
+
+      // general_saas
+      const brandName = opts.brandOrProductName || "Smart SaaS Solutions";
       return [
-        `Professional photorealistic commercial advertisement photography for ${brandName} Pharmacy Management Software.`,
-        `Setting: Modern Indian retail pharmacy store interior with neatly organized glass medicine shelves, authentic branded medicine cartons, blister packs, and syrup bottles.`,
-        `Subjects & Action: Professional Indian pharmacist in clean formal attire at the modern retail billing counter, operating a desktop computer and tablet POS terminal. Handheld laser barcode scanner actively scanning a medicine package at the counter.`,
-        `Workflow Concept: Organized purchase invoice papers, medicine stock management clipboard, and clean digital billing station.`,
-        `Atmosphere & Palette: Modern medical blue, clean crisp white, and subtle healthcare mint green color palette. Bright balanced commercial pharmacy lighting, natural reflections, sharp textures, high depth of field.`,
-        `Composition: Premium commercial product photography with ample clean negative space in the upper and center sections for promotional text overlays. Aspect ratio: ${ratioLabel}.`,
-        `STRICT NEGATIVE RESTRICTIONS: Absolutely NO festive golden curtains, NO decorative fabrics, NO floating fantasy holographic icons, NO fake unreadable gibberish text, NO shoes, NO footwear, NO clothing, NO fashion accessories. Do NOT burn Hindi or text into the image.`
+        `Professional commercial SaaS application marketing visual for ${brandName}.`,
+        `Main Subject: Modern sleek laptop and tablet mockup displaying intuitive cloud software dashboard with analytics charts, workflow automation cards, and responsive digital interface.`,
+        `Setting: High-end minimalist tech office workspace with soft ambient studio lighting, deep blue and slate gray palette, crisp composition, ample negative space for promotional copy. Aspect ratio: ${ratioLabel}.`,
+        `STRICT RESTRICTIONS: NO pharmacy, NO medicines, NO golden curtains, NO shoes, NO clothing.`
       ].join(" ");
     }
 
     if (opts.domain === "footwear") {
       const item = opts.productCategory || "Footwear";
+      const brandName = opts.brandOrProductName || opts.businessType || "Premium Footwear";
       return [
         `High-end commercial studio product photography showcasing premium ${item} by ${brandName}.`,
         `Setting: Minimalist contemporary studio pedestal with dramatic cinematic rim lighting and polished reflective floor.`,
@@ -832,6 +953,7 @@ export default function AiTemplate() {
 
     if (opts.domain === "garments") {
       const item = opts.productCategory || "Apparel";
+      const brandName = opts.brandOrProductName || opts.businessType || "Exclusive Fashion";
       return [
         `Luxury commercial fashion advertisement photography showcasing ${item} by ${brandName}.`,
         `Setting: High-end boutique showroom or minimalist editorial studio with elegant architectural lines.`,
@@ -841,6 +963,7 @@ export default function AiTemplate() {
       ].join(" ");
     }
 
+    const brandName = opts.brandOrProductName || opts.businessType || "Exclusive Store";
     return [
       `Cinematic 4K commercial promotional advertisement visual featuring ${brandName}.`,
       `Setting: High-end commercial studio environment with elegant pedestal and professional multi-point lighting.`,
@@ -851,6 +974,7 @@ export default function AiTemplate() {
 
   function buildDomainVideoMotionPrompt(opts: {
     domain: "software" | "footwear" | "garments" | "general";
+    softwareKind?: "marketing_app" | "pharmacy" | "general_saas";
     brandOrProductName?: string;
     productCategory?: string;
     businessType?: string;
@@ -861,34 +985,69 @@ export default function AiTemplate() {
     customPrompt?: string;
   }): string {
     const aspectConfig = VIDEO_ASPECT_RATIOS[opts.aspectRatio] || VIDEO_ASPECT_RATIOS["9:16"];
-    const brandName = opts.brandOrProductName || "TallyBook POS";
     const duration = opts.durationSeconds || 15;
     const ratioLabel = `${aspectConfig.id} (${aspectConfig.width}x${aspectConfig.height})`;
 
     if (opts.domain === "software") {
+      if (opts.softwareKind === "marketing_app") {
+        const brandName = opts.brandOrProductName || "Shree Template";
+        return [
+          `Cinematic dynamic commercial video advertisement showcasing ${brandName} - WhatsApp Marketing & Social Media Post App. Ultra-high definition 4K commercial cinematography, aspect ratio ${ratioLabel}, duration ${duration} seconds.`,
+          `MULTI-SCENE MOTION SEQUENCE:`,
+          `Scene 1 (Brand Introduction): Sleek cinematic camera dolly in introducing bold ${brandName} branding with smooth gradient light sweeps and modern app icon animation.`,
+          `Scene 2 (Smartphone Interface Walkthrough): Dynamic macro camera tracking shot across a modern smartphone screen displaying the ${brandName} app interface, message composer, and contact targeting tools.`,
+          `Scene 3 (Social Media Post & Template Creation): Smooth animated UI transition showing one-click social media poster creation, selecting festive and business templates, and customizing graphic elements.`,
+          `Scene 4 (WhatsApp Marketing & Video Previews): Camera pans across engaging WhatsApp marketing message cards, video promotional previews, and instant multi-platform share workflows.`,
+          `Scene 5 (Hero CTA Finale): Wide hero workspace shot of the smartphone alongside the desktop marketing dashboard with clean negative space for ${brandName} branding and a bold promotional call-to-action.`,
+          `MOTION DIRECTIVES:`,
+          `- Camera Movement: Continuous dynamic motion with smooth dolly forward, sweeping UI pan transitions, interactive screen tap animations, and soft depth of field bokeh.`,
+          `- Frame Continuity: Fluid continuous multi-frame motion throughout the entire ${duration}s runtime with zero static freeze frames.`,
+          `BACKGROUND RESTRICTIONS:`,
+          `- Modern digital marketing workspace with clean tech aesthetics, emerald green, and deep purple ambient studio accents.`,
+          `- Strict Restrictions: Absolutely NO pharmacy, NO pharmacist, NO medical stores, NO medicines, NO hospital, NO golden curtains, NO shoes, NO clothing. Clean negative space in upper third for superimposed text. DO NOT burn Hindi text into the background video.`
+        ].join(" ");
+      }
+
+      if (opts.softwareKind === "pharmacy") {
+        const brandName = opts.brandOrProductName || "TallyBook POS";
+        return [
+          `Cinematic dynamic commercial video advertisement background demonstrating ${brandName} in a modern Indian retail pharmacy store. Ultra-high definition 4K commercial cinematography, aspect ratio ${ratioLabel}, duration ${duration} seconds.`,
+          `MULTI-SCENE MOTION SEQUENCE:`,
+          `Scene 1 (Store Opening & Aisle Pan): Smooth cinematic camera dolly movement gliding through modern Indian pharmacy aisles with organized medicine racks, panning smoothly toward the well-lit billing counter.`,
+          `Scene 2 (Fast Barcode Billing): Pharmacist holding a laser barcode scanner, scanning a medicine box with a crisp red laser line, smoothly demonstrating fast retail pharmacy billing workflow.`,
+          `Scene 3 (Stock & Batch Management): Camera tracks across medicine inventory shelves showing organized medicine cartons, batch numbers, and stock management organization.`,
+          `Scene 4 (Expiry Date Tracking): Clear view of billing counter desktop and tablet interface displaying expiry date management, batch verification, and inventory control.`,
+          `Scene 5 (1-Click Purchase Scan): Demonstration of 1-click purchase bill scanning where physical purchase invoice is scanned into digital automated purchase bill entry.`,
+          `Scene 6 (Hero Branding & Counter Shot): Wide cinematic hero shot of the pharmacy billing counter with clean counter space and dedicated upper negative space for ${brandName} branding and animated title overlays.`,
+          `MOTION DIRECTIVES:`,
+          `- Camera Movement: Continuous dynamic motion with smooth dolly forward, sweeping panning shots across medicine shelves, and close-up tracking shots of barcode scanning.`,
+          `- Pharmacist Hand Movements: Realistic natural hand actions picking up medicine packs, scanning barcodes, and tapping POS touchscreen.`,
+          `- Lighting & Cinematography: Ambient pharmacy store lighting with clean medical illumination, soft depth of field bokeh, and subtle motion blur for cinematic realism.`,
+          `- Frame Continuity: Continuous multi-frame video motion throughout the entire ${duration}s runtime with zero static freeze frames.`,
+          `BACKGROUND RESTRICTIONS:`,
+          `- Clean modern Indian retail pharmacy environment with authentic medicine shelves, blister packs, and syrup bottles.`,
+          `- Palette: Professional medical blue, clean white, and subtle healthcare green.`,
+          `- Strict Restrictions: Absolutely NO gibberish fake text on screens or walls, NO floating holographic fantasy icons, NO festive golden curtains or decorative fabrics, NO shoes, NO footwear, NO clothing. Clean negative space in upper third for superimposed text. DO NOT burn Hindi text into the background video.`
+        ].join(" ");
+      }
+
+      // general_saas
+      const brandName = opts.brandOrProductName || "Smart SaaS Solutions";
       return [
-        `Cinematic dynamic commercial video advertisement background demonstrating ${brandName} in a modern Indian retail pharmacy store. Ultra-high definition 4K commercial cinematography, aspect ratio ${ratioLabel}, duration ${duration} seconds.`,
+        `Cinematic dynamic commercial video advertisement demonstrating ${brandName}. Ultra-high definition 4K commercial cinematography, aspect ratio ${ratioLabel}, duration ${duration} seconds.`,
         `MULTI-SCENE MOTION SEQUENCE:`,
-        `Scene 1 (Store Opening & Aisle Pan): Smooth cinematic camera dolly movement gliding through modern Indian pharmacy aisles with organized medicine racks, panning smoothly toward the well-lit billing counter.`,
-        `Scene 2 (Fast Barcode Billing): Pharmacist holding a laser barcode scanner, scanning a medicine box with a crisp red laser line, smoothly demonstrating fast retail pharmacy billing workflow.`,
-        `Scene 3 (Stock & Batch Management): Camera tracks across medicine inventory shelves showing organized medicine cartons, batch numbers, and stock management organization.`,
-        `Scene 4 (Expiry Date Tracking): Clear view of billing counter desktop and tablet interface displaying expiry date management, batch verification, and inventory control.`,
-        `Scene 5 (1-Click Purchase Scan): Demonstration of 1-click purchase bill scanning where physical purchase invoice is scanned into digital automated purchase bill entry.`,
-        `Scene 6 (Hero Branding & Counter Shot): Wide cinematic hero shot of the pharmacy billing counter with clean counter space and dedicated upper negative space for ${brandName} branding and animated title overlays.`,
-        `MOTION DIRECTIVES:`,
-        `- Camera Movement: Continuous dynamic motion with smooth dolly forward, sweeping panning shots across medicine shelves, and close-up tracking shots of barcode scanning.`,
-        `- Pharmacist Hand Movements: Realistic natural hand actions picking up medicine packs, scanning barcodes, and tapping POS touchscreen.`,
-        `- Lighting & Cinematography: Ambient pharmacy store lighting with clean medical illumination, soft depth of field bokeh, and subtle motion blur for cinematic realism.`,
-        `- Frame Continuity: Continuous multi-frame video motion throughout the entire ${duration}s runtime with zero static freeze frames.`,
-        `BACKGROUND RESTRICTIONS:`,
-        `- Clean modern Indian retail pharmacy environment with authentic medicine shelves, blister packs, and syrup bottles.`,
-        `- Palette: Professional medical blue, clean white, and subtle healthcare green.`,
-        `- Strict Restrictions: Absolutely NO gibberish fake text on screens or walls, NO floating holographic fantasy icons, NO festive golden curtains or decorative fabrics, NO shoes, NO footwear, NO clothing. Clean negative space in upper third for superimposed text. DO NOT burn Hindi text into the background video.`
+        `Scene 1: Sleek camera dolly introducing ${brandName} modern SaaS dashboard.`,
+        `Scene 2: Dynamic panning shot across workflow automation and cloud analytics metrics.`,
+        `Scene 3: Smooth multi-device responsive transition between desktop and mobile tablet interfaces.`,
+        `Scene 4: Hero workspace finale with clean negative space for ${brandName} branding and CTA.`,
+        `MOTION DIRECTIVES: Smooth camera dolly forward, sweeping UI pan transitions, fluid continuous motion with zero static freeze frames throughout ${duration}s runtime.`,
+        `STRICT RESTRICTIONS: NO pharmacy, NO medicines, NO golden curtains, NO shoes, NO clothing.`
       ].join(" ");
     }
 
     if (opts.domain === "footwear") {
       const item = opts.productCategory || "Footwear";
+      const brandName = opts.brandOrProductName || opts.businessType || "Premium Footwear";
       return [
         `Cinematic commercial video advertisement featuring premium ${item} by ${brandName}. Ultra-high definition 4K commercial cinematography, aspect ratio ${ratioLabel}.`,
         `MOTION DIRECTIVES:`,
@@ -903,6 +1062,7 @@ export default function AiTemplate() {
 
     if (opts.domain === "garments") {
       const item = opts.productCategory || "Apparel";
+      const brandName = opts.brandOrProductName || opts.businessType || "Exclusive Fashion";
       return [
         `Cinematic luxury fashion commercial video featuring ${item} by ${brandName}. Aspect ratio ${ratioLabel}.`,
         `MOTION DIRECTIVES:`,
@@ -912,6 +1072,7 @@ export default function AiTemplate() {
       ].join(" ");
     }
 
+    const brandName = opts.brandOrProductName || opts.businessType || "Exclusive Store";
     return [
       `Cinematic 4K commercial advertisement video featuring ${brandName}. Aspect ratio ${ratioLabel}.`,
       `Smooth camera dolly movement, dynamic commercial studio lighting, realistic reflections and continuous video motion throughout ${duration}s runtime.`
@@ -927,6 +1088,7 @@ export default function AiTemplate() {
     });
     return buildDomainVideoMotionPrompt({
       domain: ctx.domain,
+      softwareKind: ctx.softwareKind,
       brandOrProductName: ctx.brandOrProductName,
       productCategory: ctx.productCategory,
       businessType: ctx.resolvedBusinessType,
@@ -1420,13 +1582,33 @@ CRITICAL RULES:
     // Domain-specific system prompt
     let systemPrompt = "";
     if (ctx.domain === "software") {
-      systemPrompt = `You are an expert commercial video director, technology copywriter, and software marketing specialist.
+      if (ctx.softwareKind === "marketing_app") {
+        systemPrompt = `You are an expert commercial SaaS copywriter, mobile marketing director, and digital advertising specialist.
+You create high-converting promotional marketing scripts and video voiceovers for ${ctx.brandOrProductName || "Shree Template"} – a powerful WhatsApp Marketing & Social Media Post Application.
+CRITICAL DOMAIN DIRECTIVE:
+The product being promoted is ${ctx.brandOrProductName || "Shree Template"} (WhatsApp Marketing & Social Media Post App).
+You must focus exclusively on marketing automation, 1-click WhatsApp promotional campaigns, festive and business poster templates, video post creation, and boosting customer sales.
+STRICT NEGATIVE CONSTRAINTS:
+NEVER generate pharmacy, medical, pharmacist, medicine, hospital, clinic, or doctor content.
+NEVER generate fashion, clothing, footwear, style, comfort, fabric, sole, or physical collection descriptions.
+NEVER output the literal word "Other" or "अन्य".`;
+      } else if (ctx.softwareKind === "pharmacy") {
+        systemPrompt = `You are an expert commercial video director, technology copywriter, and software marketing specialist.
+You create high-converting promotional marketing scripts and video voiceovers for pharmacy software applications, POS systems, and retail medical store tools.
+CRITICAL DOMAIN DIRECTIVE:
+The product being promoted is a PHARMACY BILLING & INVENTORY MANAGEMENT SOFTWARE.
+You must focus exclusively on software capabilities: speed, accuracy, workflow automation, medicine inventory tracking, GST billing, batch numbers, expiry dates, and 1-click purchase bill scan.
+STRICT NEGATIVE CONSTRAINT:
+NEVER generate fashion, clothing, footwear, style, comfort, fabric, sole, or physical collection descriptions. NEVER use phrases like "लाजवाब स्टाइल और पूरा कम्फर्ट", "एक्सक्लूसिव कलेक्शन", "हर कदम पर", or "पहनें".`;
+      } else {
+        systemPrompt = `You are an expert commercial video director, technology copywriter, and software marketing specialist.
 You create high-converting promotional marketing scripts and video voiceovers for software applications, POS systems, SaaS tools, and digital platforms.
 CRITICAL DOMAIN DIRECTIVE:
 The product being promoted is a SOFTWARE / DIGITAL APPLICATION / TECHNOLOGY SERVICE.
-You must focus exclusively on software capabilities: speed, accuracy, workflow automation, inventory tracking, GST billing, and business efficiency.
+You must focus exclusively on software capabilities: speed, accuracy, workflow automation, inventory tracking, and business efficiency.
 STRICT NEGATIVE CONSTRAINT:
-NEVER generate fashion, clothing, footwear, style, comfort, fabric, sole, or physical collection descriptions. NEVER use phrases like "लाजवाब स्टाइल और पूरा कम्फर्ट", "एक्सक्लूसिव कलेक्शन", "हर कदम पर", or "पहनें".`;
+NEVER generate fashion, clothing, footwear, style, comfort, fabric, sole, or physical collection descriptions.`;
+      }
     } else if (ctx.domain === "footwear") {
       systemPrompt = `You are an expert commercial footwear marketing copywriter and video director. You create engaging, premium promotional advertisements highlighting footwear design, durability, comfort, and craftsmanship.`;
     } else if (ctx.domain === "garments") {
@@ -1452,50 +1634,27 @@ CRITICAL RULES FOR CUSTOM INSTRUCTIONS:
 PRIORITY 2: PRODUCT CATEGORY & DOMAIN
 ========================================
 Product Category: ${opts.productCategory || "Not specified"}
-Product Domain: ${ctx.domain.toUpperCase()} (TREAT STRICTLY AS ${ctx.domain === "software" ? "SOFTWARE / APPLICATION / TECH SERVICE" : ctx.domain.toUpperCase()})
-${ctx.domain === "software" ? "- IMPORTANT: This is a digital software/application product. DO NOT describe physical wear, shoes, fabric, or fashion style." : ""}
-
-========================================
-PRIORITY 3: BUSINESS TYPE & BRAND IDENTITY
-========================================
-Business / Brand: ${ctx.brandOrProductName || ctx.resolvedBusinessType}
-STRICT RULE: NEVER output the literal word "Other" or "अन्य" anywhere in the advertisement. If the user selected 'Other', use the brand name or product name as the identity.
-
-========================================
-PRIORITY 4: FESTIVAL / OCCASION & PROMOTIONAL CONTEXT
-========================================
-Occasion Context: ${ctx.resolvedOccasion}
-STRICT RULE: ${ctx.isCustomOccasion ? 'The occasion is "Custom" (user-defined). NEVER output the literal phrase "इस Custom पर", "Custom Festival", "Custom Offer", or "Happy Custom". Instead, craft a powerful, professional promotional introduction (e.g., "नमस्ते दोस्तों! पेश है..." or "Attention Business Owners!").' : `Incorporate the ${opts.occasion} festive context naturally.`}
-
-========================================
-PRIORITY 5: DISCOUNT & COMMERCIAL OFFER
-========================================
-${ctx.hasDiscount ? `Offer: Flat ${ctx.discountText} discount available.` : "No discount offer - focus entirely on product features, value, speed, and benefits. Do NOT mention any discount, 0% off, or price drop."}
-
-========================================
-LANGUAGE & OUTPUT FORMAT SPECIFICATIONS
-========================================
-Target Language: ${lang}
-${lang.startsWith("hi") ? `- Language Style: Natural, professional commercial Hindi (Devanagari script).
-- Technical Terminology: Keep industry software terms in their standard natural usage (e.g. TallyBook POS, Pharmacy, Fast Billing, Stock, Batch Number, Expiry Date, GST, 1-Click Scan, Automatic Purchase Bill Entry).
-- Flow: Fluent, confident, and professional sentence structure without broken grammar or random word mixing.` : ""}
-Format: ${isVideo ? `Video Voiceover Script for ${duration}s (${targetWordRule.minWords}-${targetWordRule.maxWords} words)` : "WhatsApp Marketing Message Template"}
-${isVideo ? `Voice Persona: ${gender.toUpperCase()} commercial voice actor\n${scriptGuidance}` : ""}
-
-Format your response EXACTLY as:
-TEMPLATE:
-[Your promotional marketing script here]
-
-IMAGE_PROMPT:
-[Your detailed commercial ${isVideo ? "video background frame prompt" : "promotional image prompt"} here strictly matching aspect ratio ${aspectConfig.label} (${aspectConfig.width}x${aspectConfig.height}).
 ${ctx.domain === "software"
-  ? `CRITICAL SOFTWARE / PHARMACY SPECIFICATIONS:
+  ? ctx.softwareKind === "marketing_app"
+    ? `CRITICAL SOFTWARE / MARKETING APP SPECIFICATIONS:
+- Subject: Professional commercial SaaS application marketing visual for ${ctx.brandOrProductName || "Shree Template"} - WhatsApp Marketing & Social Media Post App.
+- Visuals: Modern high-end smartphone mockup prominently displaying the ${ctx.brandOrProductName || "Shree Template"} app interface with colorful WhatsApp messaging campaigns, social media poster maker tools, and creative templates.
+- Elements: Floating clean preview cards showcasing professional social media post templates, attractive promotional poster designs, WhatsApp marketing campaign metrics, and creative image and video marketing previews. Clean modern software dashboard UI in the background with subtle digital marketing workspace aesthetics.
+- Headline & Typography: Bold elegant headline "${ctx.brandOrProductName || "Shree Template"}" with subheadline "WhatsApp Marketing & Social Media Post App", clean visual hierarchy, ample negative space for text overlays.
+- Atmosphere & Palette: Vibrant emerald green, deep tech purple, cyan, and clean white accents. Crisp studio lighting, soft glassmorphism shadows, photorealistic 8k commercial quality, realistic smartphone reflections.
+${isVideo ? `- Multi-scene motion sequence: Scene 1: Smooth camera dolly in introducing bold ${ctx.brandOrProductName || "Shree Template"} branding with smooth gradient light sweeps and modern app icon animation. Scene 2: Dynamic macro camera tracking shot across smartphone screen displaying the ${ctx.brandOrProductName || "Shree Template"} app interface and message composer. Scene 3: Smooth animated UI transition showing one-click social media poster creation and template customization. Scene 4: Camera pans across engaging WhatsApp marketing message cards and video promotional previews. Scene 5: Wide hero workspace shot of smartphone alongside desktop marketing dashboard with clean negative space for ${ctx.brandOrProductName || "Shree Template"} branding and bold call-to-action.` : ""}
+- STRICT RESTRICTIONS: Absolutely NO pharmacy, NO pharmacist, NO medical store, NO medicines, NO hospital, NO golden curtains, NO fabric drape, NO shoes, NO garments. Leave clean negative space in upper third for superimposed text. DO NOT burn Hindi text into the background visual.`
+    : ctx.softwareKind === "pharmacy"
+    ? `CRITICAL SOFTWARE / PHARMACY SPECIFICATIONS:
 - Setting: Modern Indian retail pharmacy store interior with neatly organized medicine shelves, blister packs, syrup bottles.
 - Subjects: Pharmacist at billing counter using desktop/tablet and laser barcode scanner scanning medicine packaging.
 - Workflow: Fast pharmacy billing, purchase bills, medicine stock management.
 - Palette: Modern medical blue, clean white, subtle green.
 ${isVideo ? `- Multi-scene motion sequence: Scene 1: Smooth camera movement through pharmacy aisles to billing counter. Scene 2: Barcode scanner scanning medicine package. Scene 3: Medicine inventory shelves, stock boxes, batch numbers. Scene 4: Expiry date management & inventory verification. Scene 5: 1-click purchase bill scan to digital entry. Scene 6: Billing counter hero shot with software branding space.` : ""}
-- STRICT RESTRICTIONS: NO golden curtains, NO decorative fabrics, NO floating fantasy holographic icons, NO fake unreadable text, NO shoes/footwear, NO fashion clothing. Leave clean negative space in upper third for superimposed text. DO NOT burn Hindi text into the image.`
+- STRICT RESTRICTIONS: Absolutely NO golden curtains, NO decorative fabrics, NO floating fantasy holographic icons, NO fake unreadable text, NO shoes/footwear, NO fashion clothing. Leave clean negative space in upper third for superimposed text. DO NOT burn Hindi text into the image.`
+    : `CRITICAL SOFTWARE SPECIFICATIONS:
+- Subject: Modern SaaS cloud application dashboard on laptop and mobile screen.
+- STRICT RESTRICTIONS: NO pharmacy, NO medicines, NO golden curtains, NO shoes, NO garments.`
   : `CRITICAL PRODUCT SPECIFICATIONS:
 - Subject: Premium commercial visual for ${ctx.brandOrProductName || opts.businessType} (${opts.productCategory || "products"}).
 - Setting & Lighting: High-end commercial studio lighting, elegant pedestal, clean composition.
@@ -1537,11 +1696,64 @@ ${isVideo ? `- Multi-scene motion sequence: Scene 1: Smooth camera movement thro
 
     let template = "";
 
-    // DOMAIN 1: SOFTWARE / APPLICATION / POS / PHARMACY APP
+    // DOMAIN 1: SOFTWARE / APPLICATION / POS / PHARMACY APP / MARKETING APP
     if (ctx.domain === "software") {
-      if (langCode === "hi") {
-        if (!isVideo || videoDuration === 15) {
-          template = `नमस्ते दोस्तों! पेश है ${brandName} – Pharmacy Stores के लिए एक स्मार्ट Billing और Inventory Management Application।
+      if (ctx.softwareKind === "marketing_app") {
+        if (langCode === "hi") {
+          if (!isVideo || videoDuration === 15) {
+            template = `नमस्ते दोस्तों! पेश है ${brandName} – आपके बिज़नेस के लिए एक ऑल-इन-वन WhatsApp Marketing और Social Media Post Application!
+
+अब सिर्फ एक क्लिक में बनाएं आकर्षक Social Media Posters, Festival Templates और Marketing Videos।
+
+WhatsApp पर चलाएं धमाकेदार Marketing Campaigns और बढ़ाएं अपनी Sales और Customer Reach।
+
+अपने बिज़नेस की मार्केटिंग को बनाएं आसान, स्मार्ट और सुपरफास्ट।
+
+आज ही ${brandName} डाउनलोड करें और फ्री ट्रायल शुरू करें!`;
+          } else if (videoDuration === 5) {
+            template = `धमाकेदार ${brandName}! अब WhatsApp Marketing और Social Media Posters बनाएं सिर्फ एक क्लिक में। आज ही शुरू करें!`;
+          } else if (videoDuration === 30) {
+            template = `नमस्ते दोस्तों! क्या आप अपने बिज़नेस की सोशल मीडिया और व्हाट्सएप मार्केटिंग को लेकर परेशान हैं?
+
+पेश है ${brandName} – भारत का सबसे भरोसेमंद WhatsApp Marketing और Social Media Post Creation Application!
+
+अब सिर्फ एक क्लिक में तैयार करें फेस्टिव पोस्टर्स, आकर्षक बिजनेस बैनर्स और शानदार प्रमोशनल वीडियो ऐड्स।
+
+सीधे व्हाट्सएप पर भेजें बल्क प्रमोशनल मैसेज, स्पेशल ऑफर्स और नए अपडेट्स – बिना किसी झंझट के।
+
+अपनी मार्केटिंग को बनाएं 100% ऑटोमैटिक, डिजिटल और बेहद असरदार।
+
+आज ही ${brandName} अपनाएं और अपने बिज़नेस को दें नई रफ्तार!`;
+          } else {
+            template = `नमस्ते दोस्तों! पेश है ${brandName} – भारत का नंबर वन WhatsApp Marketing और Social Media Poster Maker Application। अब बिजनेस की मार्केटिंग और सोशल मीडिया पोस्टिंग बनाएं बेहद आसान। आकर्षक पोस्टर्स, फेस्टिव विशेज और प्रमोशनल वीडियो बनाएं सिर्फ 1 क्लिक में। व्हाट्सएप पर चलाएं अनलिमिटेड कैंपेन और तेजी से बढ़ाएं अपनी बिक्री। आज ही डाउनलोड करें ${brandName} और पाएं फ्री डेमो!`;
+          }
+        } else if (langCode === "gu") {
+          template = `નમસ્તે મિત્રો! પ્રસ્તુત છે ${brandName} – તમારા બિઝનેસ માટે એક ઓલ-ઇન-વન WhatsApp Marketing અને Social Media Post Application.
+
+માત્ર એક ક્લિકમાં બનાવો આકર્ષક ફેસ્ટિવલ પોસ્ટર્સ, બિઝનેસ બેનર્સ અને પ્રોમો વિડિયોઝ.
+
+WhatsApp પર ચલાવો સ્માર્ટ માર્કેટિંગ કેમ્પેઇન અને વધારો તમારા ગ્રાહકો. આજે જ ${brandName} ડાઉનલોડ કરો!`;
+        } else if (langCode === "ur") {
+          template = `محترم دوستو! پیش ہے ${brandName} – آپ کے کاروبار کے لیے ایک جدید واٹس ایپ مارکیٹنگ اور سوشل میڈیا پوسٹ ایپلی کیشن۔
+
+صرف ایک کلک میں پرکشش سوشل میڈیا پوسٹرز، بینرز اور ویڈیو پروموشنز بنائیں۔ واٹس ایپ پر چلائیں زبردست مارکیٹنگ مہمات۔ آج ہی ${brandName} آزمائیں!`;
+        } else if (langCode === "ar") {
+          template = `مرحباً بكم! نقدم لكم ${brandName} – التطبيق المتكامل للتسويق عبر واتساب وصناعة منشورات وسائل التواصل الاجتماعي.
+
+أنشئ تصاميم إعلانية جذابة، قوالب للمناسبات، وفيديوهات ترويجية بنقرة واحدة، وعزز مبيعاتك عبر واتساب بسهولة. ابدأ اليوم مع ${brandName}!`;
+        } else {
+          template = `Hello everyone! Introducing ${brandName} – the all-in-one WhatsApp Marketing & Social Media Post Application for your business!
+
+Create stunning social media posters, festival templates, and promotional video ads with just a single click.
+
+Launch high-converting WhatsApp marketing campaigns effortlessly and grow your business reach.
+
+Get started with ${brandName} today!`;
+        }
+      } else if (ctx.softwareKind === "pharmacy") {
+        if (langCode === "hi") {
+          if (!isVideo || videoDuration === 15) {
+            template = `नमस्ते दोस्तों! पेश है ${brandName} – Pharmacy Stores के लिए एक स्मार्ट Billing और Inventory Management Application।
 
 अब करें Fast Pharmacy Billing, Manage करें Medicine Stock, Batch Number, Expiry Date और GST।
 
@@ -1550,10 +1762,10 @@ ${isVideo ? `- Multi-scene motion sequence: Scene 1: Smooth camera movement thro
 अपनी Pharmacy का Billing और Stock Management बनाएं आसान और स्मार्ट।
 
 आज ही ${brandName} अपनाएं!`;
-        } else if (videoDuration === 5) {
-          template = `धमाकेदार ${brandName}! अब Pharmacy Billing और Stock Management करें सिर्फ एक क्लिक में। आज ही अपनाएं!`;
-        } else if (videoDuration === 30) {
-          template = `नमस्ते दोस्तों! क्या आप अपनी फार्मेसी बिलिंग और इन्वेंटरी मैनेजमेंट को लेकर परेशान हैं?
+          } else if (videoDuration === 5) {
+            template = `धमाकेदार ${brandName}! अब Pharmacy Billing और Stock Management करें सिर्फ एक क्लिक में। आज ही अपनाएं!`;
+          } else if (videoDuration === 30) {
+            template = `नमस्ते दोस्तों! क्या आप अपनी फार्मेसी बिलिंग और इन्वेंटरी मैनेजमेंट को लेकर परेशान हैं?
 
 पेश है ${brandName} – Pharmacy Stores के लिए एक ऑल-इन-वन स्मार्ट Billing और Inventory Management Application!
 
@@ -1564,12 +1776,12 @@ ${isVideo ? `- Multi-scene motion sequence: Scene 1: Smooth camera movement thro
 अपनी फार्मेसी का बिजनेस बनाएं 100% डिजिटल, आसान और तेज।
 
 आज ही संपर्क करें और ${brandName} का फ्री डेमो लें!`;
-        } else {
-          template = `नमस्ते दोस्तों! पेश है ${brandName} – Pharmacy और Medical Stores के लिए भारत का सबसे भरोसेमंद स्मार्ट Billing और Inventory Management Application। अब फास्ट बिलिंग, बैच नंबर, एक्सपायरी ट्रैकिंग और जीएसटी इनवॉइसिंग बनाएं बेहद आसान। सिर्फ एक क्लिक में परचेस बिल स्कैन करें और ऑटोमैटिक एंट्री पाएं। अपनी फार्मेसी को बनाएं स्मार्ट और सफल। आज ही संपर्क करें और फ्री डेमो पाएं!`;
-        }
-      } else if (langCode === "gu") {
-        if (!isVideo || videoDuration === 15) {
-          template = `નમસ્તે મિત્રો! પ્રસ્તુત છે ${brandName} – ફાર્મસી સ્ટોર્સ માટે એક સ્માર્ટ Billing અને Inventory Management Application.
+          } else {
+            template = `नमस्ते दोस्तों! पेश है ${brandName} – Pharmacy और Medical Stores के लिए भारत का सबसे भरोसेमंद स्मार्ट Billing और Inventory Management Application। अब फास्ट बिलिंग, बैच नंबर, एक्सपायरी ट्रैकिंग और जीएसटी इनवॉइसिंग बनाएं बेहद आसान। सिर्फ एक क्लिक में परचेस बिल स्कैन करें और ऑटोमैटिक एंट्री पाएं। अपनी फार्मेसी को बनाएं स्मार्ट और सफल। आज ही संपर्क करें और फ्री डेमो पाएं!`;
+          }
+        } else if (langCode === "gu") {
+          if (!isVideo || videoDuration === 15) {
+            template = `નમસ્તે મિત્રો! પ્રસ્તુત છે ${brandName} – ફાર્મસી સ્ટોર્સ માટે એક સ્માર્ટ Billing અને Inventory Management Application.
 
 હવે કરો Fast Pharmacy Billing, Manage કરો Medicine Stock, Batch Number, Expiry Date અને GST.
 
@@ -1578,13 +1790,13 @@ ${isVideo ? `- Multi-scene motion sequence: Scene 1: Smooth camera movement thro
 તમારી Pharmacy નું Billing અને Stock Management બનાવો ઝડપી અને સ્માર્ટ.
 
 આજે જ ${brandName} અપનાવો!`;
-        } else if (videoDuration === 5) {
-          template = `ધમાકેદાર ${brandName}! ફાર્મસી બિલિંગ અને સ્ટોક મેનેજમેન્ટ હવે માત્ર એક ક્લિકમાં. આજે જ વસાવો!`;
-        } else {
-          template = `નમસ્તે મિત્રો! પ્રસ્તુત છે ${brandName} – ફાર્મસી સ્ટોર્સ માટે એક સંપૂર્ણ સ્માર્ટ Billing અને Inventory Management સોલ્યુશન. હવે કરો સુપરફાસ્ટ બિલિંગ, મેડિસિન સ્ટોક, બેચ નંબર અને એક્સપાયરી ડેટ ટ્રેકિંગ. સિંગલ ક્લિકમાં પર્ચેઝ બિલ સ્કેન કરો અને આપમેળે એન્ટ્રી કરો. આજે જ ડેમો બુક કરો!`;
-        }
-      } else if (langCode === "ur") {
-        template = `محترم دوستو! پیش ہے ${brandName} – فارمیسی اور میڈیکل اسٹورز کے لیے ایک اسمارٹ بلنگ اور انوینٹری مینجمنٹ ایپلیکیشن۔
+          } else if (videoDuration === 5) {
+            template = `ધમાકેદાર ${brandName}! ફાર્મસી બિલિંગ અને સ્ટોક મેનેજમેન્ટ હવે માત્ર એક ક્લિકમાં. આજે જ વસાવો!`;
+          } else {
+            template = `નમસ્તે મિત્રો! પ્રસ્તુત છે ${brandName} – ફાર્મસી સ્ટોર્સ માટે એક સંપૂર્ણ સ્માર્ટ Billing અને Inventory Management સોલ્યુશન. હવે કરો સુપરફાસ્ટ બિલિંગ, મેડિસિન સ્ટોક, બેચ નંબર અને એક્સપાયરી ડેટ ટ્રેકિંગ. સિંગલ ક્લિકમાં પર્ચેઝ બિલ સ્કેન કરો અને આપમેળે એન્ટ્રી કરો. આજે જ ડેમો બુક કરો!`;
+          }
+        } else if (langCode === "ur") {
+          template = `محترم دوستو! پیش ہے ${brandName} – فارمیسی اور میڈیکل اسٹورز کے لیے ایک اسمارٹ بلنگ اور انوینٹری مینجمنٹ ایپلیکیشن۔
 
 اب کریں تیز رفتار فارمیسی بلنگ، میڈیسن اسٹاک، بیچ نمبر، ایکسپائری ڈیٹ اور جی ایس ٹی کا آسان انتظام۔
 
@@ -1593,16 +1805,16 @@ ${isVideo ? `- Multi-scene motion sequence: Scene 1: Smooth camera movement thro
 अपनी فارمیسی کا نظام بنائیں جدید، تیز اور اسمارٹ۔
 
 آج ہی ${brandName} اپنائیں!`;
-      } else if (langCode === "ar") {
-        template = `مرحباً بكم! نقدم لكم ${brandName} – الحل الذكي والمتكامل لإدارة الصيدليات والفواتير والمخزون.
+        } else if (langCode === "ar") {
+          template = `مرحباً بكم! نقدم لكم ${brandName} – الحل الذكي والمتكامل لإدارة الصيدليات والفواتير والمخزون.
 
 تمتعوا بفواتير صيدلانية فائقة السرعة، إدارة ذكية لمخزون الأدوية، تتبع تواريخ الصلاحية والتشغيلات، وحسابات الضريبة بدقة.
 
 مسح ضوئي لفواتير الشراء بنقرة واحدة مع إدخال تلقائي وسريع.
 
 اجعل إدارة صيدليتك أكثر ذكاءً وسهولة مع ${brandName}!`;
-      } else {
-        template = `Hello everyone! Introducing ${brandName} – the smart Billing & Inventory Management Application for Pharmacy Stores.
+        } else {
+          template = `Hello everyone! Introducing ${brandName} – the smart Billing & Inventory Management Application for Pharmacy Stores.
 
 Experience Fast Pharmacy Billing, effortlessly manage Medicine Stock, Batch Numbers, Expiry Dates, and GST.
 
@@ -1611,6 +1823,9 @@ Scan purchase bills with a single click for instant Automatic Purchase Bill Entr
 Make your pharmacy management accurate, efficient, and smart.
 
 Get started with ${brandName} today!`;
+        }
+      } else {
+        template = `Hello everyone! Introducing ${brandName} – powerful Cloud Software and SaaS Solutions to streamline your business workflow, accelerate efficiency, and boost growth. Get started today!`;
       }
     }
     // DOMAIN 2 & 3: FOOTWEAR & GARMENTS & GENERAL
@@ -1654,6 +1869,7 @@ Get started with ${brandName} today!`;
     const imagePrompt = isVideo
       ? buildDomainVideoMotionPrompt({
           domain: ctx.domain,
+          softwareKind: ctx.softwareKind,
           brandOrProductName: ctx.brandOrProductName,
           productCategory: ctx.productCategory,
           businessType: ctx.resolvedBusinessType,
@@ -1665,6 +1881,7 @@ Get started with ${brandName} today!`;
         })
       : buildDomainImagePrompt({
           domain: ctx.domain,
+          softwareKind: ctx.softwareKind,
           brandOrProductName: ctx.brandOrProductName,
           productCategory: ctx.productCategory,
           businessType: ctx.resolvedBusinessType,
@@ -1674,7 +1891,6 @@ Get started with ${brandName} today!`;
           hasDiscount: ctx.hasDiscount,
           discountText: ctx.discountText,
         });
-
     return { template, imagePrompt };
   }
 
@@ -1809,11 +2025,24 @@ Get started with ${brandName} today!`;
 
       if (!generatedImagePrompt || promptCtx.domain === "software") {
         const containsForbiddenArtifacts = /curtain|fabric|shoe|footwear|sneaker|dress|garment|holographic/i.test(generatedImagePrompt);
-        const missingPharmacyContext = !/pharmacy|medicine|billing|stock|tally|pos/i.test(generatedImagePrompt);
-        if (containsForbiddenArtifacts || missingPharmacyContext || !generatedImagePrompt) {
+        let isInvalidForDomain = false;
+
+        if (promptCtx.softwareKind === "marketing_app") {
+          const hasPharmacyPollution = /pharmacy|pharmacist|medicine|medical|hospital|clinic/i.test(generatedImagePrompt);
+          const hasMarketingContext = /whatsapp|marketing|poster|template|social media|app|software|dashboard/i.test(generatedImagePrompt);
+          isInvalidForDomain = containsForbiddenArtifacts || hasPharmacyPollution || !hasMarketingContext;
+        } else if (promptCtx.softwareKind === "pharmacy") {
+          const missingPharmacyContext = !/pharmacy|medicine|billing|stock|tally|pos/i.test(generatedImagePrompt);
+          isInvalidForDomain = containsForbiddenArtifacts || missingPharmacyContext;
+        } else {
+          isInvalidForDomain = containsForbiddenArtifacts;
+        }
+
+        if (isInvalidForDomain || !generatedImagePrompt) {
           generatedImagePrompt = isVideo
             ? buildDomainVideoMotionPrompt({
                 domain: promptCtx.domain,
+                softwareKind: promptCtx.softwareKind,
                 brandOrProductName: promptCtx.brandOrProductName,
                 productCategory: promptCtx.productCategory,
                 businessType: promptCtx.resolvedBusinessType,
@@ -1825,6 +2054,7 @@ Get started with ${brandName} today!`;
               })
             : buildDomainImagePrompt({
                 domain: promptCtx.domain,
+                softwareKind: promptCtx.softwareKind,
                 brandOrProductName: promptCtx.brandOrProductName,
                 productCategory: promptCtx.productCategory,
                 businessType: promptCtx.resolvedBusinessType,
@@ -1836,7 +2066,6 @@ Get started with ${brandName} today!`;
               });
         }
       }
-
       setGeneratedContent({
         template: generatedTemplate,
         imagePrompt: generatedImagePrompt,
