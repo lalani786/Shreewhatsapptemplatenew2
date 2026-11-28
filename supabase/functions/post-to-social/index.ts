@@ -672,7 +672,48 @@ serve(async (req) => {
       });
     }
 
-    const { platforms, content, mediaUrl, mediaType } = await req.json();
+    const body = await req.json();
+
+    if (body?.action === "ensure_bucket_limits") {
+      try {
+        const { data: bucket, error: bErr } = await supabase.storage.getBucket("whatsapp-media");
+        const currentLimit = bucket?.file_size_limit;
+        const targetLimit = 104857600; // 100MB
+        if (!bErr && (!currentLimit || currentLimit < targetLimit)) {
+          const { error: updateErr } = await supabase.storage.updateBucket("whatsapp-media", {
+            file_size_limit: targetLimit,
+            allowed_mime_types: [
+              "image/jpeg",
+              "image/png",
+              "image/gif",
+              "image/webp",
+              "video/mp4",
+              "video/webm",
+              "video/quicktime",
+            ],
+          });
+          if (updateErr) {
+            console.error("updateBucket error:", updateErr);
+            return new Response(JSON.stringify({ success: false, error: updateErr.message }), {
+              headers: { ...corsHeaders, "Content-Type": "application/json" },
+            });
+          }
+          console.log("Successfully updated whatsapp-media bucket limit to 100MB via service role");
+          return new Response(JSON.stringify({ success: true, updated: true, limit: targetLimit }), {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+        return new Response(JSON.stringify({ success: true, updated: false, limit: currentLimit }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      } catch (err: any) {
+        return new Response(JSON.stringify({ success: false, error: err.message }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+    }
+
+    const { platforms, content, mediaUrl, mediaType } = body;
     if (!Array.isArray(platforms) || platforms.length === 0 || typeof content !== "string" || !content.trim()) {
       return new Response(JSON.stringify({ error: "Invalid request payload" }), {
         status: 400,
