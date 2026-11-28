@@ -1,0 +1,1 @@
+UPDATE storage.buckets SET allowed_mime_types = allowed_mime_types || ARRAY['video/webm'] WHERE id = 'whatsapp-media' AND NOT ('video/webm' = ANY(COALESCE(allowed_mime_types, ARRAY[]::text[])));
