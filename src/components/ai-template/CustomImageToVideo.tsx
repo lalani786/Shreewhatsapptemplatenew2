@@ -44,7 +44,7 @@ import DirectSocialPostDialog from "@/components/social/DirectSocialPostDialog";
 
 interface CustomImageToVideoProps {
   onBackToTemplates?: () => void;
-  availableKeys?: Record<string, string>;
+  availableKeys?: Record<string, boolean>;
 }
 
 const MOTION_STYLES: { id: MotionStyle; label: string; desc: string }[] = [
