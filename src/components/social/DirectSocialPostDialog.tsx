@@ -32,7 +32,6 @@ import {
   Video as VideoIcon,
   Check,
   Film,
-  Copy,
 } from "lucide-react";
 
 export type PostMediaType = "image" | "video";
@@ -111,7 +110,6 @@ export default function DirectSocialPostDialog({
   const [includeMedia, setIncludeMedia] = useState(true);
   const [isPosting, setIsPosting] = useState(false);
   const [configuredPlatforms, setConfiguredPlatforms] = useState<Record<string, boolean>>({});
-  const [bucketLimitError, setBucketLimitError] = useState<{ fileSizeMb: string; limitMb?: string } | null>(null);
 
   const hasImage = Boolean(initialImageUrl && initialImageUrl.trim());
   const hasVideo = Boolean(initialVideoUrl && initialVideoUrl.trim());
@@ -119,7 +117,6 @@ export default function DirectSocialPostDialog({
   useEffect(() => {
     if (open) {
       setContent(initialContent);
-      setBucketLimitError(null);
 
       // Determine initial active media type based on available media and clicked action
       if (initialMediaType === "video" && hasVideo) {
@@ -228,7 +225,6 @@ export default function DirectSocialPostDialog({
           }
         }
         const limitMb = (bucketInfo.file_size_limit / (1024 * 1024)).toFixed(1);
-        setBucketLimitError({ fileSizeMb: sizeMb, limitMb });
         throw new Error(
           `Video file (${sizeMb} MB) exceeds the maximum allowed file size of ${limitMb} MB configured for the 'whatsapp-media' bucket. Please increase the Storage file-size limit in your Supabase Dashboard (Storage > Buckets > whatsapp-media > Edit bucket > File size limit), or select a shorter video duration.`
         );
@@ -295,7 +291,6 @@ export default function DirectSocialPostDialog({
               }
             }
 
-            setBucketLimitError({ fileSizeMb: sizeMb, limitMb: "5.0" });
             reject(
               new Error(
                 `Video file (${sizeMb} MB) exceeds the maximum allowed file size configured for the 'whatsapp-media' bucket. Please increase the Storage file-size limit in your Supabase Dashboard (Storage > Buckets > whatsapp-media > Edit bucket > File size limit), or select a shorter video duration.`
@@ -316,7 +311,6 @@ export default function DirectSocialPostDialog({
           }
         },
         onSuccess: () => {
-          setBucketLimitError(null);
           const { data: publicUrlData } = supabase.storage
             .from("whatsapp-media")
             .getPublicUrl(fileName);
@@ -556,65 +550,6 @@ export default function DirectSocialPostDialog({
         </DialogHeader>
 
         <div className="space-y-5 py-2">
-          {/* Supabase Storage Bucket File Size Limit Banner */}
-          {bucketLimitError && (
-            <div className="rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/40 dark:border-amber-700/60 p-4 space-y-3">
-              <div className="flex items-start gap-2.5">
-                <AlertCircle className="h-5 w-5 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
-                <div className="space-y-1 text-sm">
-                  <div className="font-semibold text-amber-900 dark:text-amber-200">
-                    Storage Limit Notice: Video File ({bucketLimitError.fileSizeMb} MB) Exceeds Bucket Limit
-                  </div>
-                  <p className="text-amber-800 dark:text-amber-300 text-xs leading-relaxed">
-                    The Supabase storage bucket (<code className="font-mono font-semibold">whatsapp-media</code>) is currently limited to {bucketLimitError.limitMb || "5.0"} MB. To upload high-quality videos without compression, update the bucket limit to 100 MB.
-                  </p>
-                </div>
-              </div>
-
-              <div className="bg-amber-100/70 dark:bg-amber-900/30 rounded p-2.5 text-xs font-mono text-amber-900 dark:text-amber-200 border border-amber-200 dark:border-amber-800 flex items-center justify-between gap-2 overflow-x-auto">
-                <span className="truncate select-all">
-                  UPDATE storage.buckets SET file_size_limit = 104857600 WHERE id = 'whatsapp-media';
-                </span>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  className="h-7 px-2 text-xs shrink-0 bg-background"
-                  onClick={() => {
-                    navigator.clipboard.writeText(
-                      "UPDATE storage.buckets SET file_size_limit = 104857600, allowed_mime_types = ARRAY['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'video/mp4', 'video/webm', 'video/quicktime'] WHERE id = 'whatsapp-media';"
-                    );
-                    toast.success("SQL command copied to clipboard!");
-                  }}
-                >
-                  <Copy className="h-3.5 w-3.5 mr-1" />
-                  Copy SQL
-                </Button>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-2 pt-1 text-xs">
-                <a
-                  href="https://supabase.com/dashboard/project/nwkhkyscsyhunjnbhmqm/storage/buckets"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-md bg-amber-600 hover:bg-amber-700 text-white font-medium transition-colors"
-                >
-                  <ExternalLink className="h-3.5 w-3.5" />
-                  Open Storage Settings
-                </a>
-                <a
-                  href="https://supabase.com/dashboard/project/nwkhkyscsyhunjnbhmqm/sql/new"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-md bg-background border hover:bg-muted text-foreground font-medium transition-colors"
-                >
-                  <ExternalLink className="h-3.5 w-3.5" />
-                  Open SQL Editor
-                </a>
-              </div>
-            </div>
-          )}
-
           {/* Media Selection Options (Image Post vs Video Post) */}
           {(hasImage || hasVideo) && (
             <div className="rounded-lg border p-3.5 bg-muted/30 space-y-3">
