@@ -237,6 +237,13 @@ async function generateWithGoogleVeo(options: {
       const j = JSON.parse(errText);
       msg = j.error?.message || j.message || errText;
     } catch {}
+    if (
+      msg.includes("not found for API version") ||
+      msg.includes("not supported for predictLongRunning") ||
+      veoRes.status === 404
+    ) {
+      msg = "Google Veo 2.0/3.1 requires Google Cloud Vertex AI allowlist access with a paid billing account. Standard Gemini AI Studio API keys do not currently have public access to Veo video generation. Please select Runway Gen-3 or the Built-in High-Speed MP4 Engine.";
+    }
     throw new Error(`Google Veo error: ${msg}`);
   }
 
@@ -400,7 +407,15 @@ async function generateWithNvidiaCosmos(options: {
   imageUrl?: string;
 }): Promise<{ videoUrl: string }> {
   const { apiKey, promptText, imageUrl } = options;
-  const res = await fetch("https://integrate.api.nvidia.com/v1/videos/generations", {
+  const customCosmosEndpoint = Deno.env.get("NVIDIA_COSMOS_ENDPOINT");
+
+  if (!customCosmosEndpoint) {
+    throw new Error(
+      "NVIDIA Cosmos is distributed as a self-hosted Docker container (NIM) for dedicated GPU servers and is not hosted as a public cloud API on integrate.api.nvidia.com. Please select Runway Gen-3 or the Built-in High-Speed MP4 Engine for instant commercial video generation."
+    );
+  }
+
+  const res = await fetch(customCosmosEndpoint, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey}`,

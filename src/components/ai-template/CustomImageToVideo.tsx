@@ -252,14 +252,44 @@ export default function CustomImageToVideo({ onBackToTemplates, availableKeys = 
             usedProvider = cloudRes.provider || selectedProvider;
             usedModel = cloudRes.model || "Cloud AI Video";
             setGenerationProgress(100);
-          } else if (selectedProvider !== "auto" && cloudRes?.error) {
-            throw new Error(cloudRes.error);
+          } else if (cloudRes?.error) {
+            const errorMsg = String(cloudRes.error);
+            const isRestrictedOrSelfHosted =
+              errorMsg.includes("allowlist") ||
+              errorMsg.includes("self-hosted") ||
+              errorMsg.includes("not hosted") ||
+              errorMsg.includes("not found for API version") ||
+              errorMsg.includes("not supported for predictLongRunning") ||
+              errorMsg.includes("404");
+
+            if (isRestrictedOrSelfHosted || selectedProvider === "auto") {
+              toast.warning(
+                `${selectedProvider === "veo" ? "Google Veo requires Vertex AI allowlist access" : selectedProvider === "nvidia" ? "NVIDIA Cosmos requires a self-hosted GPU container" : "Cloud video service unavailable"}. Rendering with Built-in High-Speed MP4 Engine...`,
+                { duration: 6000 }
+              );
+              // Fall through to Client-side Motion & Camera Engine
+            } else {
+              throw new Error(cloudRes.error);
+            }
           }
         } catch (cloudErr: unknown) {
-          if (selectedProvider !== "auto") {
+          const errMsg = cloudErr instanceof Error ? cloudErr.message : String(cloudErr);
+          const isRestrictedOrSelfHosted =
+            errMsg.includes("allowlist") ||
+            errMsg.includes("self-hosted") ||
+            errMsg.includes("not hosted") ||
+            errMsg.includes("not found for API version") ||
+            errMsg.includes("not supported for predictLongRunning") ||
+            errMsg.includes("404");
+
+          if (isRestrictedOrSelfHosted || selectedProvider === "auto") {
+            toast.warning(
+              `${selectedProvider === "veo" ? "Google Veo requires Vertex AI allowlist access" : selectedProvider === "nvidia" ? "NVIDIA Cosmos requires a self-hosted GPU container" : "Cloud video service unavailable"}. Rendering with Built-in High-Speed MP4 Engine...`,
+              { duration: 6000 }
+            );
+          } else {
             throw cloudErr;
           }
-          console.warn("Cloud video provider unconfigured or busy, falling back to built-in MP4 engine:", cloudErr);
         }
       }
 
@@ -641,13 +671,13 @@ export default function CustomImageToVideo({ onBackToTemplates, availableKeys = 
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="auto">Automatic (Smart Fallback)</SelectItem>
-                    <SelectItem value="runway">Runway Gen-3 (AI Video)</SelectItem>
-                    <SelectItem value="veo">Google Veo 3.1 / 2 (Cinematic Video)</SelectItem>
+                    <SelectItem value="high_speed_mp4">Built-in High-Speed MP4 Engine (Instant • 1080p)</SelectItem>
+                    <SelectItem value="runway">Runway Gen-3 (AI Video • Cloud)</SelectItem>
+                    <SelectItem value="veo">Google Veo (Requires Vertex AI Paid Quota)</SelectItem>
                     <SelectItem value="leonardo">Leonardo AI Video (Motion)</SelectItem>
-                    <SelectItem value="nvidia">NVIDIA NIM (Cosmos)</SelectItem>
+                    <SelectItem value="nvidia">NVIDIA NIM Cosmos (Self-Hosted GPU Container)</SelectItem>
                     <SelectItem value="sora">OpenAI Sora</SelectItem>
                     <SelectItem value="pexels">Pexels Commercial Stock Footage</SelectItem>
-                    <SelectItem value="high_speed_mp4">Built-in High-Speed MP4 Engine</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
