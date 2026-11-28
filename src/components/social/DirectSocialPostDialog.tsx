@@ -229,8 +229,9 @@ export default function DirectSocialPostDialog({
           `Video file (${sizeMb} MB) exceeds the maximum allowed file size of ${limitMb} MB configured for the 'whatsapp-media' bucket. Please increase the Storage file-size limit in your Supabase Dashboard (Storage > Buckets > whatsapp-media > Edit bucket > File size limit), or select a shorter video duration.`
         );
       }
-    } catch (checkErr: any) {
-      if (checkErr.message?.includes("exceeds the maximum allowed file size")) {
+    } catch (checkErr: unknown) {
+      const errMsg = checkErr instanceof Error ? checkErr.message : String(checkErr);
+      if (errMsg.includes("exceeds the maximum allowed file size")) {
         throw checkErr;
       }
       // If getBucket fails (e.g. non-admin client RLS), proceed to TUS upload where Supabase checks limits
@@ -255,14 +256,15 @@ export default function DirectSocialPostDialog({
           cacheControl: "3600",
         },
         chunkSize: 6 * 1024 * 1024, // 6MB chunk size (Supabase TUS requirement)
-        onError: async (error: any) => {
+        onError: async (error: Error | tus.DetailedError | { message?: string; originalResponse?: { getBody?: () => string; getStatus?: () => number } }) => {
           console.error("TUS video upload error:", error);
-          const errMsg = error?.message || String(error);
+          const errMsg = "message" in error && error.message ? error.message : String(error);
+          const orig = "originalResponse" in error ? error.originalResponse : undefined;
           const responseBody =
-            typeof error?.originalResponse?.getBody === "function"
-              ? error.originalResponse.getBody()
+            orig && typeof orig.getBody === "function"
+              ? orig.getBody()
               : "";
-          const status = error?.originalResponse?.getStatus?.() || 0;
+          const status = (orig && typeof orig.getStatus === "function" ? orig.getStatus() : 0) || 0;
           const combined = `${errMsg} ${responseBody}`;
 
           if (
@@ -409,9 +411,10 @@ export default function DirectSocialPostDialog({
       }
 
       return publicUrlData.publicUrl;
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : String(err);
       console.error(`Error uploading ${mediaKind} to storage:`, err);
-      throw new Error(`Failed to upload ${mediaKind} to cloud storage: ${err.message || String(err)}`);
+      throw new Error(`Failed to upload ${mediaKind} to cloud storage: ${errMsg}`);
     }
   };
 
@@ -487,8 +490,8 @@ export default function DirectSocialPostDialog({
           { duration: 5000 },
         );
       } else if (data?.results) {
-        const succeeded = data.results.filter((r: any) => r.success).length;
-        const failed = data.results.filter((r: any) => !r.success).length;
+        const succeeded = (data.results as Array<{ success?: boolean }>).filter((r) => r.success).length;
+        const failed = (data.results as Array<{ success?: boolean }>).filter((r) => !r.success).length;
 
         if (failed === 0) {
           toast.success(
@@ -499,16 +502,17 @@ export default function DirectSocialPostDialog({
           toast.warning(`Published to ${succeeded} platform(s), ${failed} failed. Check API Setup credentials.`);
           onOpenChange(false);
         } else {
-          const firstErr = data.results[0]?.error || "Could not publish to platform(s)";
+          const firstErr = (data.results as Array<{ error?: string }>)[0]?.error || "Could not publish to platform(s)";
           toast.error("Publishing failed", { description: `${firstErr}. Configure credentials in API Setup.` });
         }
       } else {
         toast.success("Posts queued successfully!");
         onOpenChange(false);
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("Direct post error:", err);
-      toast.error(err?.message || "Failed to post to social media");
+      const errMsg = err instanceof Error ? err.message : "Failed to post to social media";
+      toast.error(errMsg);
     } finally {
       setIsPosting(false);
     }
