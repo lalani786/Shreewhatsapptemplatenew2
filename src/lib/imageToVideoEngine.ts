@@ -67,6 +67,121 @@ function easeInOutSine(t: number): number {
   return -(Math.cos(Math.PI * t) - 1) / 2;
 }
 
+function drawMotionFrame(
+  ctx: CanvasRenderingContext2D,
+  img: HTMLImageElement,
+  width: number,
+  height: number,
+  imgW: number,
+  imgH: number,
+  baseScale: number,
+  progress: number,
+  motionStyle: MotionStyle,
+  cameraMovement: CameraMovement
+) {
+  const smoothProgress = easeInOutCubic(progress);
+
+  // Compute Camera Movement transformation
+  let scale = 1.0;
+  let translateX = 0;
+  let translateY = 0;
+  let rotation = 0;
+
+  switch (cameraMovement) {
+    case "Zoom In":
+      scale = 1.0 + 0.35 * smoothProgress;
+      break;
+    case "Zoom Out":
+      scale = 1.35 - 0.35 * smoothProgress;
+      break;
+    case "Pan Left":
+      scale = 1.25;
+      translateX = width * 0.15 * (1 - 2 * smoothProgress);
+      break;
+    case "Pan Right":
+      scale = 1.25;
+      translateX = -width * 0.15 * (1 - 2 * smoothProgress);
+      break;
+    case "Rotate":
+      scale = 1.15 + 0.1 * Math.sin(progress * Math.PI);
+      rotation = (-2.5 + 5.0 * smoothProgress) * (Math.PI / 180);
+      break;
+    case "Tracking Shot":
+      scale = 1.1 + 0.2 * smoothProgress;
+      translateX = -width * 0.08 * (1 - 2 * smoothProgress);
+      translateY = height * 0.04 * Math.sin(progress * Math.PI);
+      break;
+    case "Static Camera":
+    default:
+      scale = 1.02 + 0.03 * Math.sin(progress * Math.PI);
+      break;
+  }
+
+  // Motion Style Enhancements
+  let brightness = 1.0;
+  let contrast = 1.0;
+  let saturation = 1.0;
+
+  if (motionStyle === "Cinematic") {
+    contrast = 1.08;
+    saturation = 1.05;
+    brightness = 0.98 + 0.05 * Math.sin(progress * Math.PI);
+  } else if (motionStyle === "Product Showcase") {
+    brightness = 1.03;
+    contrast = 1.05;
+  } else if (motionStyle === "3D Motion") {
+    scale *= (1 + 0.05 * Math.sin(progress * Math.PI * 2));
+  } else if (motionStyle === "Slow Motion") {
+    scale = 1.0 + (scale - 1.0) * 0.6;
+  }
+
+  ctx.save();
+  ctx.clearRect(0, 0, width, height);
+
+  // Background fill to prevent any empty edge
+  ctx.fillStyle = "#0a0a0f";
+  ctx.fillRect(0, 0, width, height);
+
+  // Filter effects
+  ctx.filter = `brightness(${brightness}) contrast(${contrast}) saturate(${saturation})`;
+
+  // Apply Camera Center transform
+  ctx.translate(width / 2 + translateX, height / 2 + translateY);
+  if (rotation !== 0) ctx.rotate(rotation);
+  ctx.scale(baseScale * scale, baseScale * scale);
+
+  // Draw image centered
+  ctx.drawImage(img, -imgW / 2, -imgH / 2, imgW, imgH);
+  ctx.restore();
+
+  // Motion Style Ambient Lighting Sweeps
+  if (motionStyle === "Product Showcase" || motionStyle === "Professional Advertisement") {
+    ctx.save();
+    const sweepX = width * (progress * 1.5 - 0.25);
+    const grad = ctx.createLinearGradient(sweepX - 120, 0, sweepX + 120, height);
+    grad.addColorStop(0, "rgba(255, 255, 255, 0)");
+    grad.addColorStop(0.5, "rgba(255, 255, 255, 0.12)");
+    grad.addColorStop(1, "rgba(255, 255, 255, 0)");
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, width, height);
+    ctx.restore();
+  }
+
+  // Subtle Cinematic Vignette
+  if (motionStyle === "Cinematic") {
+    ctx.save();
+    const radial = ctx.createRadialGradient(
+      width / 2, height / 2, Math.min(width, height) * 0.4,
+      width / 2, height / 2, Math.max(width, height) * 0.75
+    );
+    radial.addColorStop(0, "rgba(0, 0, 0, 0)");
+    radial.addColorStop(1, "rgba(0, 0, 0, 0.35)");
+    ctx.fillStyle = radial;
+    ctx.fillRect(0, 0, width, height);
+    ctx.restore();
+  }
+}
+
 export async function generateVideoFromImage(
   options: ImageToVideoOptions
 ): Promise<ImageToVideoResult> {
@@ -105,8 +220,7 @@ export async function generateVideoFromImage(
   if (!ctx) throw new Error("Could not initialize 2D canvas context");
 
   const fps = 30;
-  const totalFrames = Math.max(fps * 3, Math.round(durationSeconds * fps));
-  const frameIntervalMs = 1000 / fps;
+  const durationMs = Math.round(durationSeconds * 1000);
 
   // Audio setup if provided
   let audioContext: AudioContext | null = null;
@@ -162,15 +276,6 @@ export async function generateVideoFromImage(
     };
   });
 
-  recorder.start(100);
-  if (audioSourceNode && audioSourceNode instanceof AudioBufferSourceNode) {
-    try {
-      audioSourceNode.start();
-    } catch (err) {
-      console.warn("AudioBufferSource start note:", err);
-    }
-  }
-
   const imgW = img.naturalWidth || img.width;
   const imgH = img.naturalHeight || img.height;
   const imgAspect = imgW / imgH;
@@ -186,117 +291,58 @@ export async function generateVideoFromImage(
 
   onProgress?.(15, `Synthesizing ${motionStyle} motion with ${cameraMovement}...`);
 
-  for (let frame = 0; frame < totalFrames; frame++) {
-    const rawProgress = frame / totalFrames;
-    const smoothProgress = easeInOutCubic(rawProgress);
-    const sineProgress = easeInOutSine(rawProgress);
+  // Render first frame before recording starts so initial frame is primed
+  drawMotionFrame(ctx, img, width, height, imgW, imgH, baseScale, 0, motionStyle, cameraMovement);
 
-    // Compute Camera Movement transformation
-    let scale = 1.0;
-    let translateX = 0;
-    let translateY = 0;
-    let rotation = 0;
-
-    switch (cameraMovement) {
-      case "Zoom In":
-        scale = 1.0 + 0.35 * smoothProgress;
-        break;
-      case "Zoom Out":
-        scale = 1.35 - 0.35 * smoothProgress;
-        break;
-      case "Pan Left":
-        scale = 1.25;
-        translateX = width * 0.15 * (1 - 2 * smoothProgress);
-        break;
-      case "Pan Right":
-        scale = 1.25;
-        translateX = -width * 0.15 * (1 - 2 * smoothProgress);
-        break;
-      case "Rotate":
-        scale = 1.15 + 0.1 * Math.sin(rawProgress * Math.PI);
-        rotation = (-2.5 + 5.0 * smoothProgress) * (Math.PI / 180);
-        break;
-      case "Tracking Shot":
-        scale = 1.1 + 0.2 * smoothProgress;
-        translateX = -width * 0.08 * (1 - 2 * smoothProgress);
-        translateY = height * 0.04 * Math.sin(rawProgress * Math.PI);
-        break;
-      case "Static Camera":
-      default:
-        scale = 1.02 + 0.03 * Math.sin(rawProgress * Math.PI);
-        break;
-    }
-
-    // Motion Style Enhancements
-    let brightness = 1.0;
-    let contrast = 1.0;
-    let saturation = 1.0;
-
-    if (motionStyle === "Cinematic") {
-      contrast = 1.08;
-      saturation = 1.05;
-      brightness = 0.98 + 0.05 * Math.sin(rawProgress * Math.PI);
-    } else if (motionStyle === "Product Showcase") {
-      brightness = 1.03;
-      contrast = 1.05;
-    } else if (motionStyle === "3D Motion") {
-      scale *= (1 + 0.05 * Math.sin(rawProgress * Math.PI * 2));
-    }
-
-    ctx.save();
-    ctx.clearRect(0, 0, width, height);
-
-    // Background fill to prevent any empty edge
-    ctx.fillStyle = "#0a0a0f";
-    ctx.fillRect(0, 0, width, height);
-
-    // Filter effects
-    ctx.filter = `brightness(${brightness}) contrast(${contrast}) saturate(${saturation})`;
-
-    // Apply Camera Center transform
-    ctx.translate(width / 2 + translateX, height / 2 + translateY);
-    if (rotation !== 0) ctx.rotate(rotation);
-    ctx.scale(baseScale * scale, baseScale * scale);
-
-    // Draw image centered
-    ctx.drawImage(img, -imgW / 2, -imgH / 2, imgW, imgH);
-    ctx.restore();
-
-    // Motion Style Ambient Lighting Sweeps
-    if (motionStyle === "Product Showcase" || motionStyle === "Professional Advertisement") {
-      ctx.save();
-      const sweepX = width * (rawProgress * 1.5 - 0.25);
-      const grad = ctx.createLinearGradient(sweepX - 120, 0, sweepX + 120, height);
-      grad.addColorStop(0, "rgba(255, 255, 255, 0)");
-      grad.addColorStop(0.5, "rgba(255, 255, 255, 0.12)");
-      grad.addColorStop(1, "rgba(255, 255, 255, 0)");
-      ctx.fillStyle = grad;
-      ctx.fillRect(0, 0, width, height);
-      ctx.restore();
-    }
-
-    // Subtle Cinematic Vignette
-    if (motionStyle === "Cinematic") {
-      ctx.save();
-      const radial = ctx.createRadialGradient(
-        width / 2, height / 2, Math.min(width, height) * 0.4,
-        width / 2, height / 2, Math.max(width, height) * 0.75
-      );
-      radial.addColorStop(0, "rgba(0, 0, 0, 0)");
-      radial.addColorStop(1, "rgba(0, 0, 0, 0.35)");
-      ctx.fillStyle = radial;
-      ctx.fillRect(0, 0, width, height);
-      ctx.restore();
-    }
-
-    if (frame % 10 === 0) {
-      const pct = 15 + Math.round((frame / totalFrames) * 60);
-      onProgress?.(pct, `Rendering frame ${frame + 1} of ${totalFrames}...`);
-      await new Promise((r) => setTimeout(r, frameIntervalMs / 4));
+  recorder.start(100);
+  if (audioSourceNode && audioSourceNode instanceof AudioBufferSourceNode) {
+    try {
+      audioSourceNode.start();
+    } catch (err) {
+      console.warn("AudioBufferSource start note:", err);
     }
   }
 
-  onProgress?.(78, "Finalizing video capture...");
+  const startTime = performance.now();
+
+  await new Promise<void>((resolve) => {
+    let animFrameId: number;
+
+    const renderTick = () => {
+      const elapsed = performance.now() - startTime;
+      const progress = Math.min(1.0, elapsed / durationMs);
+
+      drawMotionFrame(
+        ctx,
+        img,
+        width,
+        height,
+        imgW,
+        imgH,
+        baseScale,
+        progress,
+        motionStyle,
+        cameraMovement
+      );
+
+      const pct = Math.min(80, 15 + Math.round(progress * 65));
+      const secs = (elapsed / 1000).toFixed(1);
+      onProgress?.(pct, `Recording motion: ${secs}s / ${durationSeconds}s (${Math.round(progress * 100)}%)...`);
+
+      if (elapsed >= durationMs) {
+        resolve();
+      } else {
+        animFrameId = requestAnimationFrame(renderTick);
+      }
+    };
+
+    animFrameId = requestAnimationFrame(renderTick);
+  });
+
+  // Short pause to ensure final frame presentation timestamp is flushed
+  await new Promise((r) => setTimeout(r, 120));
+
+  onProgress?.(82, "Finalizing video capture...");
   recorder.stop();
   if (audioSourceNode && audioSourceNode instanceof AudioBufferSourceNode) {
     try {

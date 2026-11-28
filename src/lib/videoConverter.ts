@@ -234,6 +234,7 @@ export async function convertWebmToMp4(
 
   try {
     // Primary Instagram Reels transcoding arguments:
+    // -r 30: enforce constant 30 FPS frame rate and presentation timestamps (PTS)
     // -c:v libx264: H.264 video codec
     // -pix_fmt yuv420p: standard 8-bit YUV 4:2:0 format required by IG
     // -preset fast -crf 23: high visual quality with reasonable speed
@@ -242,6 +243,8 @@ export async function convertWebmToMp4(
     let exitCode = await ffmpeg.exec([
       "-i",
       inputName,
+      "-r",
+      "30",
       "-c:v",
       "libx264",
       "-pix_fmt",
@@ -266,6 +269,8 @@ export async function convertWebmToMp4(
       exitCode = await ffmpeg.exec([
         "-i",
         inputName,
+        "-r",
+        "30",
         "-c:v",
         "libx264",
         "-pix_fmt",

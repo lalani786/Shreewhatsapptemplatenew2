@@ -117,6 +117,13 @@ export default function CustomImageToVideo({ onBackToTemplates, availableKeys = 
   const videoPlayerRef = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
+    if (videoPlayerRef.current) {
+      videoPlayerRef.current.playbackRate = 1.0;
+      videoPlayerRef.current.defaultPlaybackRate = 1.0;
+    }
+  }, [generatedVideoUrl]);
+
+  useEffect(() => {
     loadHistory();
   }, []);
 
