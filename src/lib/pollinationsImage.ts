@@ -195,6 +195,7 @@ export type PollinationsErrorKind =
   | "prompt_too_long"
   | "unauthorized"
   | "rate_limited"
+  | "balance_empty"
   | "provider_error"
   | "invalid_response"
   | "network";
@@ -482,7 +483,7 @@ export async function generatePollinationsImage(
     }
     if (response.status === 402) {
       throw new PollinationsImageError(
-        "provider_error",
+        "balance_empty",
         "Pollinations balance is empty. Top up your paid pollen balance at enter.pollinations.ai/top-up, then try again.",
         402
       );

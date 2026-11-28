@@ -1430,16 +1430,43 @@ export default function AiTemplate() {
         toast.info("Generating initial product frame first...");
         const { width: reqW, height: reqH } = getVideoDimensions(videoAspectRatio, "720p");
         if (imageProvider === "pollinations" || imageProvider === "auto") {
-          const res = await generatePollinationsImage({
-            prompt: generatedContent.imagePrompt || `${formData.businessType} ${formData.occasion} commercial promo background`,
-            model: selectedPollinationsModel,
-            width: reqW,
-            height: reqH,
-            endpoint: pollinationsEndpoint,
-            seed: createPollinationsSeed(),
-            apiKey: pollinationsApiKey || null,
-          });
-          imageUrl = res.imageUrl;
+          try {
+            const res = await generatePollinationsImage({
+              prompt: generatedContent.imagePrompt || `${formData.businessType} ${formData.occasion} commercial promo background`,
+              model: selectedPollinationsModel,
+              width: reqW,
+              height: reqH,
+              endpoint: pollinationsEndpoint,
+              seed: createPollinationsSeed(),
+              apiKey: pollinationsApiKey || null,
+            });
+            imageUrl = res.imageUrl;
+          } catch (pollErr: any) {
+            if (imageProvider === "auto") {
+              console.warn("Pollinations failed in auto mode, falling back to NVIDIA/AI Engine:", pollErr);
+              toast.info("Pollinations unavailable, falling back to alternative image engine...");
+              try {
+                const res = await generateNvidiaImage({
+                  prompt: generatedContent.imagePrompt || `${formData.businessType} ${formData.occasion} commercial promo background`,
+                  model: "flux-3-image-klein",
+                  width: reqW,
+                  height: reqH,
+                });
+                imageUrl = res.imageUrl;
+              } catch (nvErr) {
+                const res = await supabase.functions.invoke("generate-template", {
+                  body: {
+                    type: "generate_image",
+                    imagePrompt: generatedContent.imagePrompt,
+                    imageProvider: "lovable_ai",
+                  },
+                });
+                imageUrl = res.data?.imageUrl;
+              }
+            } else {
+              throw pollErr;
+            }
+          }
         } else if (imageProvider === "nvidia" || imageProvider === "cosmos") {
           const res = await generateNvidiaImage({
             prompt: generatedContent.imagePrompt || `${formData.businessType} ${formData.occasion} commercial promo background`,
@@ -2415,6 +2442,19 @@ Get started with ${brandName} today!`;
           toast.error(`${message} Add your Pollinations API key in API Setup.`);
         } else if (kind === "rate_limited") {
           toast.error(message);
+        } else if (
+          kind === "balance_empty" ||
+          (error instanceof PollinationsImageError && error.status === 402) ||
+          /balance is empty|pollen balance|402/i.test(message)
+        ) {
+          toast.error("Pollinations balance is empty (0 Pollen)", {
+            description: "Top up pollen at enter.pollinations.ai/top-up, or switch to 'NVIDIA AI (Free)' or 'Shree AI Engine'.",
+            action: {
+              label: "Top Up Pollen",
+              onClick: () => window.open("https://enter.pollinations.ai/top-up", "_blank"),
+            },
+            duration: 10000,
+          });
         } else {
           toast.error(`Pollinations image generation failed: ${message}`);
         }
@@ -3154,6 +3194,18 @@ Get started with ${brandName} today!`;
                         ? "Pollinations API key detected - the full model catalog (including typography-strong models) is available."
                         : `No Pollinations API key configured. Pollinations rejects key-less image requests with HTTP 403, so add POLLINATIONS_API_KEY in API Setup before generating. The legacy tier only ever served ${DEFAULT_LEGACY_POLLINATIONS_MODEL}.`}
                     </p>
+                    <div className="flex items-center justify-between text-[11px] pt-1 border-t border-border/50">
+                      <span className="text-muted-foreground">Pollen balance empty?</span>
+                      <a
+                        href="https://enter.pollinations.ai/top-up"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-primary hover:underline font-medium inline-flex items-center gap-1"
+                      >
+                        <ExternalLink className="h-3 w-3" />
+                        Top up Pollen (enter.pollinations.ai)
+                      </a>
+                    </div>
                   </div>
                 )}
                 {imageProvider === "nvidia" && (

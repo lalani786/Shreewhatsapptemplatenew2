@@ -1511,6 +1511,16 @@ export default function SocialMedia() {
           });
           data = { imageUrl: res.imageUrl };
         } catch (pollErr: any) {
+          if (pollErr?.status === 402 || /balance is empty|pollen balance|402/i.test(pollErr?.message || "")) {
+            toast.error("Pollinations balance is empty (0 Pollen)", {
+              description: "Top up pollen at enter.pollinations.ai/top-up, or switch to 'NVIDIA AI (Free)'.",
+              action: {
+                label: "Top Up Pollen",
+                onClick: () => window.open("https://enter.pollinations.ai/top-up", "_blank"),
+              },
+              duration: 10000,
+            });
+          }
           throw new Error(`Pollinations HD generation failed: ${pollErr?.message || "Unknown error"}`);
         }
       }
