@@ -15,7 +15,23 @@ function spaFallbackPlugin(): Plugin {
         fs.writeFileSync(path.join(distDir, "404.html"), indexHtml);
 
         // Ensure routes have physical index.html files so static hosts serve them without 404
-        const routes = ["auth", "messages", "templates", "history", "analytics", "contacts", "settings", "profile"];
+        const routes = [
+          "auth",
+          "messages",
+          "templates",
+          "history",
+          "analytics",
+          "contacts",
+          "settings",
+          "profile",
+          "broadcast",
+          "api-setup",
+          "ai-template",
+          "preferences",
+          "social-media",
+          "photo-studio",
+          "elevenlabs-setup",
+        ];
         for (const route of routes) {
           const routeDir = path.join(distDir, route);
           if (!fs.existsSync(routeDir)) {
@@ -79,6 +95,51 @@ export default defineConfig(() => ({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
+    },
+  },
+  build: {
+    target: "es2020",
+    sourcemap: false,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes("node_modules")) {
+            // Core React runtime
+            if (
+              id.includes("/react/") ||
+              id.includes("/react-dom/") ||
+              id.includes("/react-router-dom/") ||
+              id.includes("/scheduler/")
+            ) {
+              return "vendor-react";
+            }
+            // Supabase backend client
+            if (id.includes("/@supabase/")) {
+              return "vendor-supabase";
+            }
+            // TanStack React Query
+            if (id.includes("/@tanstack/")) {
+              return "vendor-query";
+            }
+            // Charting & visualizations (Analytics only)
+            if (id.includes("/recharts/") || id.includes("/d3-") || id.includes("/victory-vendor/")) {
+              return "vendor-charts";
+            }
+            // Large video resumable upload client (TUS protocol)
+            if (id.includes("/tus-js-client/")) {
+              return "vendor-tus";
+            }
+            // Radix UI components
+            if (id.includes("/@radix-ui/")) {
+              return "vendor-radix";
+            }
+            // Lucide icons
+            if (id.includes("/lucide-react/")) {
+              return "vendor-lucide";
+            }
+          }
+        },
+      },
     },
   },
 }));

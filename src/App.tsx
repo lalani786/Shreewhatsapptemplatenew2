@@ -3,22 +3,35 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
-import { useEffect, useState } from "react";
+import { useEffect, useState, lazy, Suspense } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Session } from "@supabase/supabase-js";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
-import Auth from "./pages/Auth";
-import Messages from "./pages/Messages";
-import Contacts from "./pages/Contacts";
-import Broadcast from "./pages/Broadcast";
-import Analytics from "./pages/Analytics";
-import ApiSetup from "./pages/ApiSetup";
-import AiTemplate from "./pages/AiTemplate";
-import Preferences from "./pages/Preferences";
-import SocialMedia from "./pages/SocialMedia";
-import PhotoStudio from "./pages/PhotoStudio";
-import ElevenLabsSetup from "./pages/ElevenLabsSetup";
-import NotFound from "./pages/NotFound";
+
+// Route-level dynamic imports for optimal code splitting & bundle performance
+const Auth = lazy(() => import("./pages/Auth"));
+const Messages = lazy(() => import("./pages/Messages"));
+const Contacts = lazy(() => import("./pages/Contacts"));
+const Broadcast = lazy(() => import("./pages/Broadcast"));
+const Analytics = lazy(() => import("./pages/Analytics"));
+const ApiSetup = lazy(() => import("./pages/ApiSetup"));
+const AiTemplate = lazy(() => import("./pages/AiTemplate"));
+const Preferences = lazy(() => import("./pages/Preferences"));
+const SocialMedia = lazy(() => import("./pages/SocialMedia"));
+const PhotoStudio = lazy(() => import("./pages/PhotoStudio"));
+const ElevenLabsSetup = lazy(() => import("./pages/ElevenLabsSetup"));
+const NotFound = lazy(() => import("./pages/NotFound"));
+
+function PageLoadingFallback() {
+  return (
+    <div className="flex min-h-[50vh] w-full items-center justify-center p-8">
+      <div className="flex flex-col items-center gap-3">
+        <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+        <p className="text-xs text-muted-foreground animate-pulse">Loading view...</p>
+      </div>
+    </div>
+  );
+}
 
 const queryClient = new QueryClient();
 
@@ -69,31 +82,33 @@ const App = () => (
       <Toaster />
       <Sonner />
       <BrowserRouter>
-        <Routes>
-          <Route path="/auth" element={<Auth />} />
-          <Route
-            path="/"
-            element={
-              <ProtectedRoute>
-                <DashboardLayout />
-              </ProtectedRoute>
-            }
-          >
-            <Route index element={<Navigate to="/messages" replace />} />
-            <Route path="messages" element={<Messages />} />
-            <Route path="contacts" element={<Contacts />} />
-            <Route path="broadcast" element={<Broadcast />} />
-            <Route path="analytics" element={<Analytics />} />
-            <Route path="api-setup" element={<ApiSetup />} />
-            <Route path="ai-template" element={<AiTemplate />} />
-            <Route path="preferences" element={<Preferences />} />
-            <Route path="social-media" element={<SocialMedia />} />
-            <Route path="photo-studio" element={<PhotoStudio />} />
-            <Route path="elevenlabs-setup" element={<ElevenLabsSetup />} />
-            <Route path="elevenlabs" element={<Navigate to="/elevenlabs-setup" replace />} />
-          </Route>
-          <Route path="*" element={<NotFound />} />
-        </Routes>
+        <Suspense fallback={<PageLoadingFallback />}>
+          <Routes>
+            <Route path="/auth" element={<Auth />} />
+            <Route
+              path="/"
+              element={
+                <ProtectedRoute>
+                  <DashboardLayout />
+                </ProtectedRoute>
+              }
+            >
+              <Route index element={<Navigate to="/messages" replace />} />
+              <Route path="messages" element={<Messages />} />
+              <Route path="contacts" element={<Contacts />} />
+              <Route path="broadcast" element={<Broadcast />} />
+              <Route path="analytics" element={<Analytics />} />
+              <Route path="api-setup" element={<ApiSetup />} />
+              <Route path="ai-template" element={<AiTemplate />} />
+              <Route path="preferences" element={<Preferences />} />
+              <Route path="social-media" element={<SocialMedia />} />
+              <Route path="photo-studio" element={<PhotoStudio />} />
+              <Route path="elevenlabs-setup" element={<ElevenLabsSetup />} />
+              <Route path="elevenlabs" element={<Navigate to="/elevenlabs-setup" replace />} />
+            </Route>
+            <Route path="*" element={<NotFound />} />
+          </Routes>
+        </Suspense>
       </BrowserRouter>
     </TooltipProvider>
   </QueryClientProvider>

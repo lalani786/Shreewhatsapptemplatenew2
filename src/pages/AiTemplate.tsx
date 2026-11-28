@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, lazy, Suspense } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -44,7 +44,7 @@ import {
   UploadCloud,
 } from "lucide-react";
 import { toast } from "sonner";
-import CustomImageToVideo from "@/components/ai-template/CustomImageToVideo";
+const CustomImageToVideo = lazy(() => import("@/components/ai-template/CustomImageToVideo"));
 import { optimizeMarketingImagePrompt } from "@/lib/promptOptimizer";
 import DirectSocialPostDialog from "@/components/social/DirectSocialPostDialog";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -2635,10 +2635,21 @@ Get started with ${brandName} today!`;
       </div>
 
       {contentType === "custom_video" ? (
-        <CustomImageToVideo
-          onBackToTemplates={() => setContentType("poster")}
-          availableKeys={availableKeys}
-        />
+        <Suspense
+          fallback={
+            <div className="flex min-h-[400px] w-full items-center justify-center rounded-xl border border-dashed bg-card/50 p-8">
+              <div className="flex flex-col items-center gap-3">
+                <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+                <p className="text-xs text-muted-foreground animate-pulse">Loading Custom Video Studio...</p>
+              </div>
+            </div>
+          }
+        >
+          <CustomImageToVideo
+            onBackToTemplates={() => setContentType("poster")}
+            availableKeys={availableKeys}
+          />
+        </Suspense>
       ) : (
         <div className="grid gap-6 lg:grid-cols-2">
         {/* Input Form */}
