@@ -698,7 +698,7 @@ export default function AiTemplate() {
 
   interface PromptContextResolution {
     domain: "software" | "footwear" | "garments" | "general";
-    softwareKind?: "marketing_app" | "pharmacy" | "general_saas";
+    softwareKind?: "marketing_app" | "pharmacy" | "pos_software" | "general_saas";
     brandOrProductName: string;
     productCategory: string;
     resolvedBusinessType: string;
@@ -725,7 +725,7 @@ export default function AiTemplate() {
 
     // Priority 1: Check Custom Instructions and Category for domain and software subcategory
     let domain: "software" | "footwear" | "garments" | "general" = "general";
-    let softwareKind: "marketing_app" | "pharmacy" | "general_saas" | undefined = undefined;
+    let softwareKind: "marketing_app" | "pharmacy" | "pos_software" | "general_saas" | undefined = undefined;
 
     const MARKETING_APP_KEYWORDS = [
       "whatsapp marketing", "whatsapp", "social media post", "social media", "shree template",
@@ -736,13 +736,20 @@ export default function AiTemplate() {
     const PHARMACY_KEYWORDS = [
       "pharmacy app", "medical software", "pharmacy store", "chemist", "medical store",
       "pharmacy billing", "medicine stock", "pharmacy", "medicine", "chemist shop",
-      "prescription", "blister pack", "tallybook pos", "tally book pos", "purchase bill entry"
+      "prescription", "blister pack"
+    ];
+
+    const POS_SOFTWARE_KEYWORDS = [
+      "pos application", "pos software", "point of sale", "pos system", "pos",
+      "retail pos", "billing software", "billing system", "retail billing",
+      "store application", "retail store application", "inventory management",
+      "accounting software", "barcode billing", "gst billing software", "billing app",
+      "tallybook", "tally book"
     ];
 
     const GENERAL_SOFTWARE_KEYWORDS = [
-      "software", "app", "application", "pos", "billing", "inventory", "accounting",
-      "erp", "crm", "saas", "dashboard", "portal", "system", "fintech", "cloud software",
-      "gst billing", "tally"
+      "software", "app", "application", "erp", "crm", "saas", "dashboard",
+      "portal", "system", "fintech", "cloud software", "gst billing", "tally"
     ];
 
     // Priority 1: Custom Instructions (Absolute ground truth)
@@ -752,13 +759,16 @@ export default function AiTemplate() {
     } else if (PHARMACY_KEYWORDS.some((kw) => customLower.includes(kw))) {
       domain = "software";
       softwareKind = "pharmacy";
+    } else if (POS_SOFTWARE_KEYWORDS.some((kw) => customLower.includes(kw))) {
+      domain = "software";
+      softwareKind = "pos_software";
+    } else if (GENERAL_SOFTWARE_KEYWORDS.some((kw) => customLower.includes(kw))) {
+      domain = "software";
+      softwareKind = "general_saas";
     } else if (FOOTWEAR_KEYWORDS.some((kw) => customLower.includes(kw))) {
       domain = "footwear";
     } else if (GARMENT_KEYWORDS.some((kw) => customLower.includes(kw))) {
       domain = "garments";
-    } else if (GENERAL_SOFTWARE_KEYWORDS.some((kw) => customLower.includes(kw))) {
-      domain = "software";
-      softwareKind = "general_saas";
     }
     // Priority 2: Product Category
     else if (MARKETING_APP_KEYWORDS.some((kw) => categoryLower.includes(kw))) {
@@ -767,25 +777,31 @@ export default function AiTemplate() {
     } else if (PHARMACY_KEYWORDS.some((kw) => categoryLower.includes(kw))) {
       domain = "software";
       softwareKind = "pharmacy";
+    } else if (POS_SOFTWARE_KEYWORDS.some((kw) => categoryLower.includes(kw))) {
+      domain = "software";
+      softwareKind = "pos_software";
+    } else if (GENERAL_SOFTWARE_KEYWORDS.some((kw) => categoryLower.includes(kw))) {
+      domain = "software";
+      softwareKind = "general_saas";
     } else if (FOOTWEAR_KEYWORDS.some((kw) => categoryLower.includes(kw))) {
       domain = "footwear";
     } else if (GARMENT_KEYWORDS.some((kw) => categoryLower.includes(kw))) {
       domain = "garments";
-    } else if (GENERAL_SOFTWARE_KEYWORDS.some((kw) => categoryLower.includes(kw))) {
-      domain = "software";
-      softwareKind = "general_saas";
     }
     // Priority 3: Business Type
-    else if (businessLower.includes("footwear")) {
-      domain = "footwear";
-    } else if (businessLower.includes("clothing") || businessLower.includes("garment")) {
-      domain = "garments";
-    } else if (businessLower.includes("pharmacy") || businessLower.includes("medical")) {
+    else if (businessLower.includes("pharmacy") || businessLower.includes("medical")) {
       domain = "software";
       softwareKind = "pharmacy";
+    } else if (POS_SOFTWARE_KEYWORDS.some((kw) => businessLower.includes(kw))) {
+      domain = "software";
+      softwareKind = "pos_software";
     } else if (SOFTWARE_KEYWORDS.some((kw) => businessLower.includes(kw))) {
       domain = "software";
       softwareKind = "general_saas";
+    } else if (businessLower.includes("footwear")) {
+      domain = "footwear";
+    } else if (businessLower.includes("clothing") || businessLower.includes("garment") || businessLower.includes("fashion")) {
+      domain = "garments";
     }
 
     // Extract brand or product name (Priority: Custom Instructions -> Category -> Business Type)
@@ -808,6 +824,8 @@ export default function AiTemplate() {
     if (!brandOrProductName) {
       if (softwareKind === "marketing_app") {
         brandOrProductName = "Shree Template";
+      } else if (softwareKind === "pos_software") {
+        brandOrProductName = "TallyBook POS";
       } else if (softwareKind === "pharmacy") {
         brandOrProductName = "Pharmacy Management";
       } else if (domain === "software") {
@@ -830,6 +848,14 @@ export default function AiTemplate() {
       featuresToHighlight.push("Creative Image & Video Previews");
       featuresToHighlight.push("Instant Customer Reach");
       featuresToHighlight.push("Modern Marketing Automation");
+    } else if (softwareKind === "pos_software") {
+      featuresToHighlight.push("Fast Retail POS Billing");
+      featuresToHighlight.push("Barcode Scanning & Receipt Printing");
+      featuresToHighlight.push("Real-Time Inventory & Stock Tracking");
+      featuresToHighlight.push("Sales Analytics & Performance Dashboard");
+      featuresToHighlight.push("GST Compliant Invoicing");
+      featuresToHighlight.push("Multi-Store & Cloud Access");
+      featuresToHighlight.push("Quick Purchase Bill Entry");
     } else if (softwareKind === "pharmacy") {
       featuresToHighlight.push("Fast Pharmacy Billing");
       featuresToHighlight.push("Medicine Stock Management");
@@ -850,6 +876,8 @@ export default function AiTemplate() {
     if (resolvedBusinessType.toLowerCase() === "other" || !resolvedBusinessType) {
       if (softwareKind === "marketing_app") {
         resolvedBusinessType = `${brandOrProductName} Application`;
+      } else if (softwareKind === "pos_software") {
+        resolvedBusinessType = `${brandOrProductName} Solutions`;
       } else if (softwareKind === "pharmacy") {
         resolvedBusinessType = `${brandOrProductName} Solutions`;
       } else if (domain === "software") {
@@ -889,7 +917,7 @@ export default function AiTemplate() {
 
   function buildDomainImagePrompt(opts: {
     domain: "software" | "footwear" | "garments" | "general";
-    softwareKind?: "marketing_app" | "pharmacy" | "general_saas";
+    softwareKind?: "marketing_app" | "pharmacy" | "pos_software" | "general_saas";
     brandOrProductName?: string;
     productCategory?: string;
     businessType?: string;
@@ -912,6 +940,23 @@ export default function AiTemplate() {
           `Typography & Composition: Bold elegant headline "${brandName}" with subheadline "WhatsApp Marketing & Social Media Post App", clean visual hierarchy, ample negative space for text overlays.`,
           `Atmosphere & Palette: Vibrant emerald green, deep tech purple, cyan, and clean white accents. Crisp studio lighting, soft glassmorphism shadows, photorealistic 8k commercial quality, realistic smartphone reflections. Aspect ratio: ${ratioLabel}.`,
           `STRICT RESTRICTIONS: Absolutely NO pharmacy, NO pharmacist, NO medical store, NO medicines, NO hospital, NO golden curtains, NO fabric drape, NO shoes, NO garments. Do NOT burn Hindi script into the background visual.`
+        ].join(" ");
+      }
+
+      if (opts.softwareKind === "pos_software") {
+        const brandName = opts.brandOrProductName || "TallyBook POS";
+        const occasionFestiveDetails = (!opts.isCustomOccasion && opts.occasion && opts.occasion.toLowerCase() !== "custom")
+          ? `Setting subtly incorporates warm tasteful ${opts.occasion} festive celebration elements (warm ambient festive lights, subtle celebratory decorative accents in the background) while keeping the POS billing hardware and software screen as the prominent hero subject.`
+          : `Setting features a clean, modern commercial retail aesthetic with realistic store lighting.`;
+
+        return [
+          `Professional photorealistic commercial advertisement photography for ${brandName} Retail POS and Store Management Software.`,
+          `Main Subject: Modern Point of Sale (POS) computer billing workstation on a sleek, polished retail checkout counter. Crisp high-resolution desktop monitor prominently displaying an intuitive ${brandName} POS software dashboard with real-time sales analytics charts, inventory stock tracking, and fast billing interface.`,
+          `Hardware & Counter Details: Ergonomic handheld laser barcode scanner, high-speed thermal receipt printer with a freshly printed GST receipt, and sleek digital payment card terminal neatly arranged on the counter.`,
+          `Setting & Atmosphere: Professional Indian retail business owner or store manager professionally operating the POS billing system. Clean modern multi-category retail store environment in the background with subtle softly blurred retail displays (apparel racks, footwear shelves, or packaged retail goods). ${occasionFestiveDetails}`,
+          `Lighting & Palette: Bright balanced commercial retail lighting, crisp reflections on screen and counter, sharp textures, high depth of field. Modern tech blue, slate gray, and clean crisp white color palette.`,
+          `Composition: Premium commercial product photography with sharp focus on the POS hardware and dashboard interface. Clean ample negative space in the upper and center sections for promotional text overlays. Aspect ratio: ${ratioLabel}.`,
+          `STRICT NEGATIVE RESTRICTIONS: Absolutely NO pharmacy, NO medicines, NO pills, NO blister packs, NO medical shelves, NO doctor, NO chemist shop. Absolutely NO festive golden curtains, NO decorative draped fabrics, NO floating fantasy holographic icons, NO fake unreadable gibberish text. Do NOT burn Hindi or text into the image.`
         ].join(" ");
       }
 
@@ -974,7 +1019,7 @@ export default function AiTemplate() {
 
   function buildDomainVideoMotionPrompt(opts: {
     domain: "software" | "footwear" | "garments" | "general";
-    softwareKind?: "marketing_app" | "pharmacy" | "general_saas";
+    softwareKind?: "marketing_app" | "pharmacy" | "pos_software" | "general_saas";
     brandOrProductName?: string;
     productCategory?: string;
     businessType?: string;
@@ -1005,6 +1050,32 @@ export default function AiTemplate() {
           `BACKGROUND RESTRICTIONS:`,
           `- Modern digital marketing workspace with clean tech aesthetics, emerald green, and deep purple ambient studio accents.`,
           `- Strict Restrictions: Absolutely NO pharmacy, NO pharmacist, NO medical stores, NO medicines, NO hospital, NO golden curtains, NO shoes, NO clothing. Clean negative space in upper third for superimposed text. DO NOT burn Hindi text into the background video.`
+        ].join(" ");
+      }
+
+      if (opts.softwareKind === "pos_software") {
+        const brandName = opts.brandOrProductName || "TallyBook POS";
+        const festiveNote = (!opts.isCustomOccasion && opts.occasion && opts.occasion.toLowerCase() !== "custom")
+          ? `Atmosphere incorporates warm subtle ${opts.occasion} festive ambient lighting and celebratory store accents.`
+          : `Atmosphere is clean modern commercial retail.`;
+
+        return [
+          `Cinematic dynamic commercial video advertisement background demonstrating ${brandName} Retail Point of Sale (POS) and Billing Software. Ultra-high definition 4K commercial cinematography, aspect ratio ${ratioLabel}, duration ${duration} seconds.`,
+          `MULTI-SCENE MOTION SEQUENCE:`,
+          `Scene 1 (Retail Store & Sleek POS Terminal): Smooth cinematic camera dolly in introducing the sleek retail checkout counter and modern desktop computer running the ${brandName} POS system.`,
+          `Scene 2 (Fast Barcode Billing Action): Retail store operator holding a laser barcode scanner, rapidly scanning product tags with an active red laser line, demonstrating ultra-fast retail billing workflow.`,
+          `Scene 3 (Inventory & Analytics Dashboard): Dynamic macro panning shot across the POS monitor displaying intuitive real-time stock levels, multi-category inventory tracking, and sales analytics charts.`,
+          `Scene 4 (GST Invoicing & Receipt Print): Close-up shot of instant GST invoice calculation on screen and the thermal receipt printer swiftly printing a clean receipt.`,
+          `Scene 5 (Hero CTA Finale): Wide hero shot of the retail checkout counter with modern store aesthetics, showing the complete ${brandName} POS station with clean upper negative space for branding and call-to-action text overlay.`,
+          `MOTION DIRECTIVES:`,
+          `- Camera Movement: Continuous dynamic motion with smooth dolly forward, sweeping panning shots across the counter, and close-up tracking shots of barcode scanning.`,
+          `- Natural Operator Actions: Store manager actively tapping the POS touch screen, scanning item barcodes, and handling receipt print.`,
+          `- Lighting & Cinematography: Professional commercial retail store illumination with natural specular reflections, soft depth of field bokeh, and realistic motion blur. ${festiveNote}`,
+          `- Frame Continuity: Continuous multi-frame video motion throughout the entire ${duration}s runtime with zero static freeze frames.`,
+          `BACKGROUND RESTRICTIONS:`,
+          `- Modern multi-category retail store environment (garments, footwear, or retail goods subtly visible in soft background blur).`,
+          `- Palette: Professional modern blue, slate gray, and clean white.`,
+          `- Strict Restrictions: Absolutely NO pharmacy, NO medicines, NO pills, NO blister packs, NO medical shelves, NO chemist shop. Absolutely NO fake unreadable gibberish text on screens or walls, NO floating fantasy holographic icons, NO festive golden curtains or decorative hanging fabrics. Clean negative space in upper third for superimposed text. DO NOT burn Hindi text into the background video.`
         ].join(" ");
       }
 
@@ -1592,6 +1663,17 @@ STRICT NEGATIVE CONSTRAINTS:
 NEVER generate pharmacy, medical, pharmacist, medicine, hospital, clinic, or doctor content.
 NEVER generate fashion, clothing, footwear, style, comfort, fabric, sole, or physical collection descriptions.
 NEVER output the literal word "Other" or "अन्य".`;
+      } else if (ctx.softwareKind === "pos_software") {
+        systemPrompt = `You are an expert commercial video director, technology copywriter, and retail software marketing specialist.
+You create high-converting promotional marketing scripts and video voiceovers for Point of Sale (POS) systems, retail billing software, and store inventory management solutions like ${ctx.brandOrProductName || "TallyBook POS"}.
+CRITICAL DOMAIN DIRECTIVE:
+The product being promoted is ${ctx.brandOrProductName || "TallyBook POS"} – a modern Point of Sale (POS) and Retail Store Management Application.
+You must focus exclusively on retail software capabilities: ultra-fast billing, laser barcode scanning, real-time inventory management, GST compliant invoicing, sales analytics, multi-store management, and effortless purchase bill entry.
+STRICT NEGATIVE CONSTRAINTS:
+NEVER generate pharmacy, medical, medicine, doctor, hospital, or chemist content.
+NEVER generate standalone fashion/clothing collection or footwear shoe descriptions (e.g. "पहनें", "कलेक्शन पहनें", "सोल"). This is SOFTWARE marketing for retail store owners, NOT a clothing or shoe product sale.
+NEVER output the literal word "Other" or "अन्य".
+When occasion is "Custom", create a standard professional commercial advertisement with ZERO festive golden curtains or holiday decor.`;
       } else if (ctx.softwareKind === "pharmacy") {
         systemPrompt = `You are an expert commercial video director, technology copywriter, and software marketing specialist.
 You create high-converting promotional marketing scripts and video voiceovers for pharmacy software applications, POS systems, and retail medical store tools.
@@ -1644,6 +1726,14 @@ ${ctx.domain === "software"
 - Atmosphere & Palette: Vibrant emerald green, deep tech purple, cyan, and clean white accents. Crisp studio lighting, soft glassmorphism shadows, photorealistic 8k commercial quality, realistic smartphone reflections.
 ${isVideo ? `- Multi-scene motion sequence: Scene 1: Smooth camera dolly in introducing bold ${ctx.brandOrProductName || "Shree Template"} branding with smooth gradient light sweeps and modern app icon animation. Scene 2: Dynamic macro camera tracking shot across smartphone screen displaying the ${ctx.brandOrProductName || "Shree Template"} app interface and message composer. Scene 3: Smooth animated UI transition showing one-click social media poster creation and template customization. Scene 4: Camera pans across engaging WhatsApp marketing message cards and video promotional previews. Scene 5: Wide hero workspace shot of smartphone alongside desktop marketing dashboard with clean negative space for ${ctx.brandOrProductName || "Shree Template"} branding and bold call-to-action.` : ""}
 - STRICT RESTRICTIONS: Absolutely NO pharmacy, NO pharmacist, NO medical store, NO medicines, NO hospital, NO golden curtains, NO fabric drape, NO shoes, NO garments. Leave clean negative space in upper third for superimposed text. DO NOT burn Hindi text into the background visual.`
+    : ctx.softwareKind === "pos_software"
+    ? `CRITICAL SOFTWARE / POS APPLICATION SPECIFICATIONS:
+- Subject: Professional commercial advertisement for ${ctx.brandOrProductName || "TallyBook POS"} Retail POS and Store Management Software.
+- Visuals: Modern computer Point of Sale (POS) workstation on sleek retail checkout counter, desktop monitor displaying ${ctx.brandOrProductName || "TallyBook POS"} software dashboard (sales analytics, inventory stock, fast billing), handheld barcode scanner, receipt printer, digital payment terminal.
+- Environment: Modern retail store owner or manager operating POS, clean multi-category retail store background with subtle soft blur (garments racks, footwear displays, or packaged goods).
+- Palette: Professional modern blue, slate gray, and clean crisp white.
+${isVideo ? `- Multi-scene motion sequence: Scene 1: Sleek retail billing counter & POS terminal. Scene 2: Barcode scanning & quick billing. Scene 3: Inventory management & sales analytics dashboard. Scene 4: GST invoice generation & receipt print. Scene 5: Hero CTA with ${ctx.brandOrProductName || "TallyBook POS"} branding.` : ""}
+- STRICT RESTRICTIONS: Absolutely NO pharmacy, NO medicines, NO pills, NO blister packs, NO medical shelves, NO doctor, NO chemist shop. Absolutely NO festive golden curtains, NO decorative fabrics, NO floating fantasy holographic icons, NO fake unreadable text. Leave clean negative space in upper third for superimposed text. DO NOT burn Hindi text into the image/video.`
     : ctx.softwareKind === "pharmacy"
     ? `CRITICAL SOFTWARE / PHARMACY SPECIFICATIONS:
 - Setting: Modern Indian retail pharmacy store interior with neatly organized medicine shelves, blister packs, syrup bottles.
@@ -1749,6 +1839,66 @@ Create stunning social media posters, festival templates, and promotional video 
 Launch high-converting WhatsApp marketing campaigns effortlessly and grow your business reach.
 
 Get started with ${brandName} today!`;
+        }
+      } else if (ctx.softwareKind === "pos_software") {
+        if (langCode === "hi") {
+          if (!isVideo || videoDuration === 15) {
+            template = `नमस्ते दोस्तों! पेश है ${brandName} – रिटेल स्टोर्स के लिए एक सुपरफास्ट Point of Sale (POS) और Billing Management Application!
+
+अब सिर्फ एक क्लिक में करें Fast Barcode Billing, Manage करें Inventory Stock, Sales Analytics और GST Invoicing।
+
+Garments, Footwear और Retail Stores के लिए सबसे भरोसेमंद बिलिंग और स्टॉक सॉफ्टवेयर।
+
+अपने बिजनेस की बिलिंग और इन्वेंटरी बनाएं 100% डिजिटल, आसान और तेज।
+
+आज ही ${brandName} अपनाएं और फ्री डेमो बुक करें!`;
+          } else if (videoDuration === 5) {
+            template = `धमाकेदार ${brandName}! सुपरफास्ट POS Billing और Inventory Management अब सिर्फ एक क्लिक में। आज ही अपनाएं!`;
+          } else if (videoDuration === 30) {
+            template = `नमस्ते दोस्तों! क्या आप अपने स्टोर की बिलिंग, स्टॉक और अकाउंटिंग को लेकर परेशान हैं?
+
+पेश है ${brandName} – रिटेल स्टोर्स के लिए ऑल-इन-वन स्मार्ट Point of Sale (POS) और Inventory Management Application!
+
+अब करें सुपरफास्ट बारकोड बिलिंग, आसानी से मैनेज करें स्टॉक, सेल्स रिपोर्ट्स और GST इनवॉइस।
+
+चाहे आपका गारमेंट्स स्टोर हो, फुटवियर शॉप हो या कोई भी रिटेल बिजनेस – ${brandName} से बिलिंग होगी चुटकियों में।
+
+अपने रिटेल बिजनेस को बनाएं 100% ऑटोमैटिक, आसान और स्मार्ट।
+
+आज ही संपर्क करें और ${brandName} का फ्री डेमो लें!`;
+          } else {
+            template = `नमस्ते दोस्तों! पेश है ${brandName} – भारत का सबसे भरोसेमंद Retail POS और Billing Software। अब सुपरफास्ट बारकोड बिलिंग, रियल-टाइम स्टॉक ट्रैकिंग, सेल्स एनालिटिक्स और जीएसटी इनवॉइसिंग बनाएं बेहद आसान। गारमेंट्स, फुटवियर और जनरल रिटेल स्टोर्स के लिए परफेक्ट सॉल्यूशन। अपनी दुकान को बनाएं स्मार्ट और डिजिटल। आज ही संपर्क करें और फ्री डेमो पाएं!`;
+          }
+        } else if (langCode === "gu") {
+          if (!isVideo || videoDuration === 15) {
+            template = `નમસ્તે મિત્રો! પ્રસ્તુત છે ${brandName} – રિટેલ સ્ટોર્સ માટે એક સુપરફાસ્ટ Point of Sale (POS) અને Billing Management Application.
+
+હવે કરો ફાસ્ટ બારકોડ બિલિંગ, મેનેજ કરો ઇન્વેન્ટરી સ્ટોક, સેલ્સ એનાલિટિક્સ અને GST ઇનવોઇસિંગ.
+
+ગાર્મેન્ટ્સ, ફૂટવેર અને રિટેલ સ્ટોર્સ માટે સૌથી વિશ્વસનીય સોલ્યુશન. આજે જ ${brandName} અપનાવો અને ફ્રી ડેમો મેળવો!`;
+          } else if (videoDuration === 5) {
+            template = `ધમાકેદાર ${brandName}! સુપરફાસ્ટ POS બિલિંગ અને સ્ટોક મેનેજમેન્ટ હવે માત્ર એક ક્લિકમાં. આજે જ વસાવો!`;
+          } else {
+            template = `નમસ્તે મિત્રો! પ્રસ્તુત છે ${brandName} – રિટેલ સ્ટોર્સ માટે એક સંપૂર્ણ સ્માર્ટ Point of Sale (POS) સોલ્યુશન. હવે કરો ફાસ્ટ બારકોડ બિલિંગ, ઇન્વેન્ટરી સ્ટોક અને સેલ્સ રિપોર્ટ્સ. આજે જ સંપર્ક કરો અને ફ્રી ડેમો મેળવો!`;
+          }
+        } else if (langCode === "ur") {
+          template = `محترم دوستو! پیش ہے ${brandName} – ریٹیل اسٹورز کے لیے ایک جدید پوائنٹ آف سیل (POS) اور بلنگ مینجمنٹ ایپلی کیشن۔
+
+اب کریں تیز رفتار بارکوڈ بلنگ، انوینٹری اسٹاک، سیلز اینالیٹکس اور جی ایس ٹی انوائسنگ کا آسان انتظام۔
+
+گارمنٹس، فٹ ویئر اور ریٹیل شاپس کے لیے بہترین حل۔ آج ہی ${brandName} آزمائیں!`;
+        } else if (langCode === "ar") {
+          template = `مرحباً بكم! نقدم لكم ${brandName} – نظام نقاط البيع (POS) وإدارة الفواتير والمخزون الأكثر تطوراً لمتاجر التجزئة.
+
+فواتير فائقة السرعة بالباركود، إدارة دقيقة للمخزون، تقارير مبيعات شاملة وفواتير ضريبية فورية. ابدأ اليوم مع ${brandName}!`;
+        } else {
+          template = `Hello everyone! Introducing ${brandName} – the ultimate Point of Sale (POS) and Retail Store Management Application!
+
+Experience lightning-fast barcode billing, real-time inventory management, sales analytics, and GST-compliant invoicing.
+
+The perfect all-in-one POS solution for garments, footwear, and modern retail stores.
+
+Make your retail operations automated, efficient, and smart. Get started with ${brandName} today!`;
         }
       } else if (ctx.softwareKind === "pharmacy") {
         if (langCode === "hi") {
@@ -1970,6 +2120,7 @@ Get started with ${brandName} today!`;
             supabase.functions.invoke("generate-template", {
               body: {
                 type: isVideo ? "video_template" : "marketing_template",
+                systemPrompt: dynamicPrompt.systemPrompt,
                 businessType: dynamicPrompt.resolvedBusinessType,
                 productCategory: formData.productCategory,
                 discount: formData.discount[0],
@@ -2023,16 +2174,50 @@ Get started with ${brandName} today!`;
         customPrompt: formData.customPrompt,
       });
 
+      // Validate and sanitize template for domain consistency
+      if (promptCtx.domain === "software") {
+        const containsFashionGarbage = /लाजवाब स्टाइल|पूरा कम्फर्ट|एक्सक्लूसिव कलेक्शन.*पहन|हर कदम पर|पहनें|पहनने|कलेक्शन पहन|सैंडल/i.test(generatedTemplate);
+        const containsLiteralOtherOrCustom = /\b(other|अन्य)\s+(पेश करता|offers|प्रस्तुत)|इस\s+(custom|कस्टम)\s+पर/i.test(generatedTemplate);
+        let isTemplateInvalid = containsFashionGarbage || containsLiteralOtherOrCustom;
+
+        if (promptCtx.softwareKind === "marketing_app") {
+          if (/pharmacy|medical|दवा|केमिस्ट/i.test(generatedTemplate)) isTemplateInvalid = true;
+        } else if (promptCtx.softwareKind === "pos_software") {
+          if (/pharmacy|pharmacist|medical store|दवा|केमिस्ट/i.test(generatedTemplate)) isTemplateInvalid = true;
+        }
+
+        if (isTemplateInvalid) {
+          const fallback = generateSmartFallbackTemplate({
+            businessType: formData.businessType,
+            productCategory: formData.productCategory,
+            discount: formData.discount[0],
+            occasion: formData.occasion,
+            customPrompt: formData.customPrompt,
+            isVideo,
+            videoDuration,
+            aspectRatio: videoAspectRatio,
+            language: voiceoverLanguage,
+            gender: voiceGender,
+          });
+          generatedTemplate = fallback.template;
+        }
+      }
+
       if (!generatedImagePrompt || promptCtx.domain === "software") {
-        const containsForbiddenArtifacts = /curtain|fabric|shoe|footwear|sneaker|dress|garment|holographic/i.test(generatedImagePrompt);
+        const containsForbiddenArtifacts = /curtain|fabric drape|shoe|footwear|sneaker|dress|holographic/i.test(generatedImagePrompt);
         let isInvalidForDomain = false;
 
         if (promptCtx.softwareKind === "marketing_app") {
           const hasPharmacyPollution = /pharmacy|pharmacist|medicine|medical|hospital|clinic/i.test(generatedImagePrompt);
           const hasMarketingContext = /whatsapp|marketing|poster|template|social media|app|software|dashboard/i.test(generatedImagePrompt);
           isInvalidForDomain = containsForbiddenArtifacts || hasPharmacyPollution || !hasMarketingContext;
+        } else if (promptCtx.softwareKind === "pos_software") {
+          const hasPharmacyPollution = /pharmacy|pharmacist|medicine|medical|hospital|clinic|blister\s*pack|pills?|syrup/i.test(generatedImagePrompt);
+          const hasPosContext = /pos|point of sale|billing|checkout|barcode|counter|inventory|retail|software|dashboard|tally/i.test(generatedImagePrompt);
+          const hasForbiddenDecor = /curtains?|fabric drape|holographic/i.test(generatedImagePrompt);
+          isInvalidForDomain = hasForbiddenDecor || hasPharmacyPollution || !hasPosContext;
         } else if (promptCtx.softwareKind === "pharmacy") {
-          const missingPharmacyContext = !/pharmacy|medicine|billing|stock|tally|pos/i.test(generatedImagePrompt);
+          const missingPharmacyContext = !/pharmacy|medicine|chemist|blister|medical/i.test(generatedImagePrompt);
           isInvalidForDomain = containsForbiddenArtifacts || missingPharmacyContext;
         } else {
           isInvalidForDomain = containsForbiddenArtifacts;
@@ -2150,9 +2335,16 @@ Get started with ${brandName} today!`;
       toast.error("Enter an image prompt first");
       return;
     }
-    const optimized = optimizeMarketingImagePrompt(generatedContent.imagePrompt, {
+    const ctx = resolvePromptContext({
       businessType: formData.businessType,
+      productCategory: formData.productCategory,
       occasion: formData.occasion,
+      customPrompt: formData.customPrompt,
+      discount: formData.discount[0],
+    });
+    const optimized = optimizeMarketingImagePrompt(generatedContent.imagePrompt, {
+      businessType: ctx.resolvedBusinessType,
+      occasion: ctx.resolvedOccasion,
       discount: formData.discount[0],
     });
     setGeneratedContent(prev => ({ ...prev, imagePrompt: optimized }));
@@ -2166,9 +2358,16 @@ Get started with ${brandName} today!`;
       return;
     }
 
-    const currentPrompt = optimizeMarketingImagePrompt(rawPrompt, {
+    const ctx = resolvePromptContext({
       businessType: formData.businessType,
+      productCategory: formData.productCategory,
       occasion: formData.occasion,
+      customPrompt: formData.customPrompt,
+      discount: formData.discount[0],
+    });
+    const currentPrompt = optimizeMarketingImagePrompt(rawPrompt, {
+      businessType: ctx.resolvedBusinessType,
+      occasion: ctx.resolvedOccasion,
       discount: formData.discount[0],
     });
 

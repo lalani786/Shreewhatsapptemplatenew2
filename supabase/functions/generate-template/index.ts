@@ -342,6 +342,7 @@ serve(async (req) => {
       voiceoverLanguage,
       voiceGender,
       selectedVoiceId,
+      systemPrompt: clientSystemPrompt,
     } = body;
 
     // Handle image generation request
@@ -534,12 +535,18 @@ serve(async (req) => {
     let systemPrompt = "";
     let userPrompt = "";
 
+    const isCustomOccasion = !occasion || occasion.toLowerCase() === "custom";
+    const safeOccasion = isCustomOccasion ? "Special Showcase" : occasion;
+    const safeBusinessType = (!businessType || businessType.toLowerCase() === "other")
+      ? (productCategory || "Modern Retail & Business")
+      : businessType;
+
     if (type === "video_template") {
       const personaTone = voiceGender === "male"
         ? "an energetic, confident, authoritative commercial male voiceover persona"
         : "a warm, vibrant, engaging commercial female voiceover persona";
 
-      systemPrompt =
+      systemPrompt = clientSystemPrompt ||
         `You are an expert commercial video director, multilingual copywriter, and voiceover producer.
 You create high-converting promotional video voiceover scripts optimized for social media marketing (Instagram Reels, YouTube Shorts, TikTok, Facebook).
 You craft voiceover scripts specifically tailored for ${personaTone}.
@@ -549,14 +556,14 @@ You strictly follow target timing, word counts, and genuine native language scri
       userPrompt =
         `Create a promotional marketing video voiceover script and video background frame image prompt for:
 
-Business Type: ${businessType}
+Business Type: ${safeBusinessType}
 Product Category: ${productCategory || "General products"}
 ${
           hasDiscount
             ? `Discount: ${discount}% OFF`
             : "No discount offer - focus on brand awareness and product showcase"
         }
-Occasion: ${occasion}
+Occasion: ${safeOccasion}
 ${customPrompt ? `Additional Instructions:\n${customPrompt}` : ""}
 
 VIDEO TIMING & VOICE SPECIFICATIONS:
@@ -576,7 +583,7 @@ TEMPLATE:
 IMAGE_PROMPT:
 [Your detailed video frame image prompt here]`;
     } else if (type === "marketing_template") {
-      systemPrompt =
+      systemPrompt = clientSystemPrompt ||
         `You are an expert Indian marketing copywriter specializing in WhatsApp Business marketing. 
 You create engaging, festive, and culturally relevant marketing messages optimized for Indian audiences.
 Your messages are concise, use emojis appropriately, and include clear call-to-actions.
@@ -586,19 +593,19 @@ Always maintain a professional yet friendly tone.`;
       userPrompt =
         `Create a WhatsApp marketing message and promotional poster image prompt for:
 
-Business Type: ${businessType}
+Business Type: ${safeBusinessType}
 Product Category: ${productCategory || "General products"}
 ${
           hasDiscount
             ? `Discount: ${discount}% OFF`
             : "No discount offer - focus on brand awareness and product showcase"
         }
-Occasion: ${occasion}
+Occasion: ${safeOccasion}
 ${customPrompt ? `Additional Instructions: ${customPrompt}` : ""}
 
 Please provide:
 1. A WhatsApp message template (max 500 characters) with:
-   - Festive greeting appropriate for ${occasion}
+   - Greeting appropriate for ${safeOccasion}
 ${
           hasDiscount
             ? "   - Clear discount offer"
@@ -609,8 +616,8 @@ ${
    - Relevant emojis
 
 2. A professional commercial image prompt for an AI image generator (FLUX / Midjourney style):
-   - Subject: Vibrant commercial product photography or 3D promotional visual for ${businessType} (${productCategory || "products"})
-   - Atmosphere: Festive Indian visual theme matching ${occasion} with elegant decorative elements (e.g. golden accents, warm ambient lighting, festive background)
+   - Subject: Vibrant commercial product photography or 3D promotional visual for ${safeBusinessType} (${productCategory || "products"})
+   - Atmosphere: ${isCustomOccasion ? "Clean modern commercial advertisement with professional studio lighting, crisp composition, ample negative space" : `Festive Indian visual theme matching ${safeOccasion} with elegant decorative elements (e.g. golden accents, warm ambient lighting, festive background)`}
    - Style: High-end commercial advertisement, studio lighting, hyper-realistic, 8k resolution, clean composition
    - STRICT RULES FOR IMAGE PROMPT:
      * Describe VISUAL objects, materials, and lighting — NOT mobile app screens or paragraphs of chat messages.
@@ -841,13 +848,19 @@ Provide a single message that is:
 
       const template = templateMatch?.[1]?.trim() || content;
       const hasDiscount = discount && discount > 0;
+      const isCustomOccasion = !occasion || occasion.toLowerCase() === "custom";
+      const safeOccasion = isCustomOccasion ? "Special Showcase" : occasion;
+      const safeBusinessType = (!businessType || businessType.toLowerCase() === "other")
+        ? (productCategory || "Modern Retail & Business")
+        : businessType;
+
       const defaultFrame = type === "video_template"
         ? (hasDiscount
-            ? `Cinematic commercial promotional video frame for ${businessType} ${occasion} sale with ${discount}% discount, 4k ultra-realistic commercial cinematography, professional studio lighting, aspect ratio ${videoAspectRatio || "9:16"}`
-            : `Cinematic commercial promotional video frame for ${businessType} ${occasion} celebration, 4k ultra-realistic commercial cinematography, professional studio lighting, aspect ratio ${videoAspectRatio || "9:16"}`)
+            ? `Cinematic commercial promotional video frame for ${safeBusinessType} ${safeOccasion} sale with ${discount}% discount, 4k ultra-realistic commercial cinematography, professional studio lighting, aspect ratio ${videoAspectRatio || "9:16"}`
+            : `Cinematic commercial promotional video frame for ${safeBusinessType} ${safeOccasion} celebration, 4k ultra-realistic commercial cinematography, professional studio lighting, aspect ratio ${videoAspectRatio || "9:16"}`)
         : (hasDiscount
-            ? `Promotional poster for ${businessType} ${occasion} sale with ${discount}% discount, Indian festive theme, professional marketing design`
-            : `Promotional poster for ${businessType} ${occasion} celebration, product showcase, Indian festive theme, professional marketing design`);
+            ? `Promotional poster for ${safeBusinessType} ${safeOccasion} sale with ${discount}% discount, clean commercial marketing design`
+            : `Promotional poster for ${safeBusinessType} ${safeOccasion} celebration, product showcase, clean commercial marketing design`);
 
       const generatedImagePrompt = imagePromptMatch?.[1]?.trim() || defaultFrame;
 
