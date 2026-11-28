@@ -41,8 +41,10 @@ import {
   Clock,
   Globe,
   Radio,
+  UploadCloud,
 } from "lucide-react";
 import { toast } from "sonner";
+import CustomImageToVideo from "@/components/ai-template/CustomImageToVideo";
 import { optimizeMarketingImagePrompt } from "@/lib/promptOptimizer";
 import DirectSocialPostDialog from "@/components/social/DirectSocialPostDialog";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -93,7 +95,7 @@ import {
   type PollinationsRequestDebug,
 } from "@/lib/pollinationsImage";
 
-type ContentType = "poster" | "prompt_only" | "video";
+type ContentType = "poster" | "prompt_only" | "video" | "custom_video";
 type ImageProvider =
   | "auto"
   | "lovable_ai"
@@ -168,7 +170,8 @@ function describeAbComparison(results: PollinationsAbResult[]): string {
 const contentTypes = [
   { id: "poster" as ContentType, label: "Poster", description: "Image + message template", icon: Palette },
   { id: "prompt_only" as ContentType, label: "Prompt Only", description: "Text message template", icon: FileText },
-  { id: "video" as ContentType, label: "Video Template", description: "Video promo script", icon: Video },
+  { id: "video" as ContentType, label: "Video Template", description: "Video promo script & voice", icon: Video },
+  { id: "custom_video" as ContentType, label: "Custom Image to Video", description: "Upload local image & generate video", icon: UploadCloud },
 ];
 
 const businessTypes = [
@@ -2614,24 +2617,30 @@ Get started with ${brandName} today!`;
       </div>
 
       {/* Content Type Tabs */}
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {contentTypes.map(({ id, label, description, icon: Icon }) => (
           <button
             key={id}
             onClick={() => setContentType(id)}
-            className={`flex flex-col items-center gap-2 rounded-lg border-2 p-4 transition-colors ${contentType === id
-                ? "border-primary bg-primary/10 text-primary"
+            className={`flex flex-col items-center gap-2 rounded-lg border-2 p-3.5 transition-colors ${contentType === id
+                ? "border-primary bg-primary/10 text-primary shadow-xs"
                 : "border-border bg-card text-muted-foreground hover:border-primary/50"
               }`}
           >
-            <Icon className="h-6 w-6" />
-            <span className="font-semibold text-sm">{label}</span>
-            <span className="text-xs opacity-70">{description}</span>
+            <Icon className="h-5 w-5" />
+            <span className="font-semibold text-xs text-center">{label}</span>
+            <span className="text-[10px] opacity-70 text-center leading-tight">{description}</span>
           </button>
         ))}
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-2">
+      {contentType === "custom_video" ? (
+        <CustomImageToVideo
+          onBackToTemplates={() => setContentType("poster")}
+          availableKeys={availableKeys}
+        />
+      ) : (
+        <div className="grid gap-6 lg:grid-cols-2">
         {/* Input Form */}
         <Card>
           <CardHeader>
@@ -2737,6 +2746,22 @@ Get started with ${brandName} today!`;
                   <Badge variant="outline" className="text-[10px]">
                     Direct MP4
                   </Badge>
+                </div>
+
+                <div className="flex items-center justify-between p-2 rounded-md bg-purple-500/10 border border-purple-500/25 text-xs text-purple-900 dark:text-purple-200">
+                  <span className="flex items-center gap-1.5 font-medium text-[11px]">
+                    <UploadCloud className="h-3.5 w-3.5 text-purple-600" />
+                    Have your own product photo or poster?
+                  </span>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-6 text-[10px] px-2 bg-background border-purple-400 text-purple-700 dark:text-purple-300 hover:bg-purple-50"
+                    onClick={() => setContentType("custom_video")}
+                  >
+                    Custom Image to Video &rarr;
+                  </Button>
                 </div>
 
                 {/* 1. Video Duration - Strictly 5s, 15s, 30s, 60s (No 90s) */}
@@ -3474,17 +3499,28 @@ Get started with ${brandName} today!`;
                       Download Frame
                     </Button>
                     {contentType === "poster" && (
-                      <Button
-                        size="sm"
-                        className="flex-1 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white font-medium shadow-sm"
-                        onClick={() => {
-                          setSocialPostMediaType("image");
-                          setSocialPostOpen(true);
-                        }}
-                      >
-                        <Share2 className="mr-1.5 h-3.5 w-3.5" />
-                        Post to Social Media
-                      </Button>
+                      <>
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          className="flex-1"
+                          onClick={() => setContentType("custom_video")}
+                        >
+                          <Film className="mr-1.5 h-3.5 w-3.5 text-purple-600" />
+                          Animate to Video
+                        </Button>
+                        <Button
+                          size="sm"
+                          className="flex-1 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white font-medium shadow-sm"
+                          onClick={() => {
+                            setSocialPostMediaType("image");
+                            setSocialPostOpen(true);
+                          }}
+                        >
+                          <Share2 className="mr-1.5 h-3.5 w-3.5" />
+                          Post to Social Media
+                        </Button>
+                      </>
                     )}
                   </div>
 
@@ -3680,6 +3716,7 @@ Get started with ${brandName} today!`;
           )}
         </div>
       </div>
+      )}
 
       {/* Direct Social Media Post Dialog */}
       <DirectSocialPostDialog
