@@ -1,1 +1,0 @@
-ALTER TABLE public.api_credentials ADD COLUMN IF NOT EXISTS gemini_api_key TEXT;

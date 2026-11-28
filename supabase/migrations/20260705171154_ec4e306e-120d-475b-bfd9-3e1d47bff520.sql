@@ -1,1 +1,0 @@
-ALTER TABLE public.api_credentials ADD COLUMN IF NOT EXISTS whatsapp_business_account_id TEXT;

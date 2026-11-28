@@ -1,1 +1,0 @@
-ALTER TABLE public.social_media_credentials ADD CONSTRAINT social_media_credentials_user_id_key UNIQUE (user_id);

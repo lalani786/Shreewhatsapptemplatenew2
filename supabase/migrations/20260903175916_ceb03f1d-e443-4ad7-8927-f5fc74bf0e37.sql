@@ -1,1 +1,0 @@
-DROP FUNCTION IF EXISTS public.increment_shared_video_views(TEXT);

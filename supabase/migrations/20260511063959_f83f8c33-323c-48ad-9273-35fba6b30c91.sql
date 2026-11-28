@@ -1,1 +1,0 @@
-ALTER TABLE public.social_media_credentials ADD COLUMN IF NOT EXISTS youtube_channel_name text;
