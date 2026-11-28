@@ -1,6 +1,6 @@
 import { createRoot } from "react-dom/client";
-import App from "./App.tsx";
 import "./index.css";
+import App from "./App.tsx";
 
 // Apply saved theme before render to avoid flash and ensure all routes honor it
 (() => {

@@ -3,8 +3,14 @@ import { createClient } from '@supabase/supabase-js';
 import type { Database } from './types';
 import { brokeredPreviewStorage } from './previewAuthStorage';
 
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
-const SUPABASE_PUBLISHABLE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+// Production-safe Supabase configuration: Read from Vite environment variables with built-in fallbacks
+// to guarantee the app never crashes at runtime if Vercel deployment lacks explicit dashboard env vars.
+const SUPABASE_URL =
+  import.meta.env.VITE_SUPABASE_URL || "https://nwkhkyscsyhunjnbhmqm.supabase.co";
+const SUPABASE_PUBLISHABLE_KEY =
+  import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
+  import.meta.env.VITE_SUPABASE_ANON_KEY ||
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im53a2hreXNjc3lodW5qbmJobXFtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk4NzM5MTAsImV4cCI6MjEwNTQ0OTkxMH0.uN3FSIeBk9wWD5h9GtlN5QTsmpgQwEr5Zksc6HbY3Ck";
 
 // Import the supabase client like this:
 // import { supabase } from "@/integrations/supabase/client";

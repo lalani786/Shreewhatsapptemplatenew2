@@ -14,6 +14,12 @@ function spaFallbackPlugin(): Plugin {
         // Create 404.html fallback for static hosts
         fs.writeFileSync(path.join(distDir, "404.html"), indexHtml);
 
+        // Ensure vercel.json is present in dist
+        const vercelJsonPath = path.resolve(__dirname, "./vercel.json");
+        if (fs.existsSync(vercelJsonPath)) {
+          fs.copyFileSync(vercelJsonPath, path.join(distDir, "vercel.json"));
+        }
+
         // Ensure routes have physical index.html files so static hosts serve them without 404
         const routes = [
           "auth",
